@@ -520,38 +520,19 @@ function viewTiming() {
   const all = filtered(), ys = yearsSel();
   seasonsIn(all).forEach(s => {
     const rows = all.filter(r => r.se === s && r.a && r.x !== 't');
-    const b = block(`${s} 접수 누적 추이`, '가로축은 그 해 기준 입소일(가장 많은 입소일)로부터 몇 주 전·후인지입니다. 연도별 입소일이 달라도 같은 선상에서 비교됩니다.');
-    const PRE = 20, POST = 30;
-    const refs = {}; ys.forEach(y => refs[y] = refDate(rows.filter(r => r.y === y)));
-    let lo = 0, hi = 0;
-    ys.forEach(y => rows.filter(r => r.y === y && refs[y]).forEach(r => { const w = weeksBefore(r.a, refs[y]); lo = Math.max(lo, Math.min(w, PRE)); hi = Math.max(hi, Math.min(-w, POST)); }));
-    const xs = []; for (let w = lo; w >= -hi; w--) xs.push(w);
-    const xc = [lo + 1, ...xs];
-    const lab = w => (w > 0 ? `${w}주 전` : w === 0 ? '입소 주' : `${-w}주 후`);
-    const ds = [], mile = [];
-    ys.forEach(y => {
-      const ref = refs[y]; if (!ref) return;
-      const ry = rows.filter(r => r.y === y), ws = ry.map(r => weeksBefore(r.a, ref));
-      const data = xc.map(x => ws.filter(w => w >= x || (x === lo && w > lo)).length);
-      ds.push({ label: `${y} 접수`, data, borderColor: yearColor(y), backgroundColor: yearColor(y), tension: .25, pointRadius: 0, borderWidth: 2.5 });
-      ds.push({ label: `${y} 등록`, data: xc.map(x => ry.filter((r, i) => r.in && (ws[i] >= x || (x === lo && ws[i] > lo))).length), borderColor: yearColor(y), borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 });
-      const pre = ry.filter(r => dnum(r.a) <= dnum(ref)).map(r => r.a).sort();
-      const at = q => { if (!pre.length) return '–'; const d = pre[Math.max(0, Math.ceil(pre.length * q) - 1)]; return `${d} (${weeksBefore(d, ref)}주 전)`; };
-      mile.push([String(y), ref, pre[0] ? `${pre[0]} (${weeksBefore(pre[0], ref)}주 전)` : '–', at(.25), at(.5), at(.75), pre.length, ry.length - pre.length]);
-    });
+    const m = {}; ys.forEach(y => m[y] = {});
+    const keys = new Set();
+    rows.forEach(r => { const k = monthKey(r.a, r.y); keys.add(k); m[r.y][k] ??= { a: 0, e: 0 }; m[r.y][k].a++; if (r.in) m[r.y][k].e++; });
+    const ks = [...keys].sort((a, b) => a - b);
+    const b = block(`${s} 월별 접수 인원`, '접수일 기준. 전년 ○월은 운영 연도 전해(예: 2026년 운영이면 2025년)입니다.');
     chart(b, {
-      type: 'line', data: { labels: xc.map(lab), datasets: ds },
-      options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, title: { display: true, text: '누적 인원' } } } }
-    }, 320);
-    table(b, `${s} 접수 시점`, ['연도', '기준 입소일', '첫 접수', '입소 전 접수 25%', '50%', '75%', '입소일까지 접수', '입소 후 접수'], mile);
-
-    const b2 = block(`${s} 주별 접수 인원`, '입소 기준 주차별 신규 접수');
-    const body = xs.map(x => [lab(x), ...ys.flatMap(y => {
-      const ref = refs[y]; if (!ref) return ['', ''];
-      const g = rows.filter(r => r.y === y && (x === lo ? weeksBefore(r.a, ref) >= lo : x === -hi ? weeksBefore(r.a, ref) <= -hi : weeksBefore(r.a, ref) === x));
-      return [g.length, count(g, r => r.in)];
-    })]);
-    table(b2, `${s} 주별 접수`, ['주차', ...ys.flatMap(y => [`${y} 접수`, `${y} 중 등록`])], body);
+      type: 'bar', data: { labels: ks.map(monthLabel), datasets: ys.map(y => ({ label: `${y} 접수`, backgroundColor: yearColor(y), data: ks.map(k => m[y][k]?.a || 0) })) },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, title: { display: true, text: '인원' } } } }
+    }, 280);
+    const body = ks.map(k => [monthLabel(k), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0 }; return [c.a, c.e, rate(c.e, c.a)]; })]);
+    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e }), { a: 0, e: 0 }); return [t.a, t.e, rate(t.e, t.a)]; })];
+    tot.total = true; body.push(tot);
+    table(b, `${s} 월별 접수`, ['접수 월', ...ys.flatMap(y => [`${y} 접수`, `${y} 중 등록`, `${y} 등록률`])], body);
     viewMethodDate(all, s, ys);
   });
 }
@@ -559,15 +540,17 @@ function viewTiming() {
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
 function dayKey(d, unit) {
   if (unit === 'day') return d;
+  if (unit === 'month') return d.slice(0, 7);
   const t = dnum(d), wd = new Date(t * 864e5).getUTCDay(), mon = t - ((wd + 6) % 7);
   return new Date(mon * 864e5).toISOString().slice(0, 10);
 }
 function dayLabel(k, unit) {
+  if (unit === 'month') return `${k.slice(0, 4)}년 ${Number(k.slice(5))}월`;
   const wd = WD[new Date(dnum(k) * 864e5).getUTCDay()];
   return unit === 'day' ? `${k} (${wd})` : `${k} 주`;
 }
 function viewMethodDate(all, s, ys) {
-  const unit = S._unit || 'day', onlyIn = S._basis === 'in';
+  const unit = S._unit || 'month', onlyIn = S._basis === 'in';
   ys.forEach(y => {
     const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && (!onlyIn || r.in));
     if (!rows.length) return;
@@ -575,18 +558,17 @@ function viewMethodDate(all, s, ys) {
     const grid = {};
     rows.forEach(r => { const k = dayKey(r.a, unit); grid[k] ??= {}; grid[k][r.m] = (grid[k][r.m] || 0) + 1; });
     const keys = Object.keys(grid).sort();
-    const b = block(`${y} ${s} 전형별 ${unit === 'day' ? '일자별' : '주별'} 접수`, `${onlyIn ? '등록자만' : '접수 전체'} 기준. 주별은 월요일 시작 주로 묶습니다.`);
-    const cum = {}; ms.forEach(m => cum[m] = 0); let cumT = 0;
+    const b = block(`${y} ${s} 전형별 ${{ month: '월별', week: '주별', day: '일자별' }[unit]} 접수`, `${onlyIn ? '등록자만' : '접수 전체'} 기준. 주별은 월요일 시작 주로 묶습니다.`);
     const body = keys.map(k => {
-      const g = grid[k], t = ms.reduce((a, m) => a + (g[m] || 0), 0); cumT += t;
-      return [dayLabel(k, unit), ...ms.map(m => g[m] || ''), t, cumT];
+      const g = grid[k], t = ms.reduce((a, m) => a + (g[m] || 0), 0);
+      return [dayLabel(k, unit), ...ms.map(m => g[m] || ''), t];
     });
-    const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length, '']; tot.total = true; body.push(tot);
+    const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length]; tot.total = true; body.push(tot);
     chart(b, {
       type: 'bar', data: { labels: keys.map(k => dayLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[k][m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
       options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 70, autoSkip: true } }, y: { stacked: true, title: { display: true, text: '인원' } } } }
     }, 300);
-    table(b, `${y} ${s} 전형별 접수일`, ['접수일', ...ms, '합계', '누적'], body);
+    table(b, `${y} ${s} 전형별 접수일`, [{ month: '접수 월', week: '접수 주', day: '접수일' }[unit], ...ms, '합계'], body);
   });
 }
 const METHOD_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6aa36f', '#9a8f7a', '#4a5a59', '#d1b56b'];
@@ -754,7 +736,7 @@ function render() {
   $('#tabTools').innerHTML = '';
   if (S.tab === 'grade') $('#tabTools').append(h('label', {}, '과목 등급 기준 ', h('select', { id: 'gradeTarget', onchange: e => { S._gt = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자'))));
   if (S.tab === 'timing') $('#tabTools').append(
-    h('label', {}, '전형별 표 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'day' }, '일별'), h('option', { value: 'week' }, '주별'))),
+    h('label', {}, '전형별 표 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'month' }, '월별'), h('option', { value: 'week' }, '주별'), h('option', { value: 'day' }, '일별'))),
     h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   if (S.tab !== 'data') {
@@ -764,7 +746,7 @@ function render() {
   }
   if (S.tab === 'grade' && S._gt) $('#gradeTarget').value = S._gt;
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
-  if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'day'; $('#basisSel').value = S._basis || 'all'; }
+  if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'month'; $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
   S._gt = $('#gradeTarget')?.value || S._gt; S._dim = $('#dimSel')?.value || S._dim;
 }
