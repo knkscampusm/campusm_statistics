@@ -23,10 +23,20 @@ h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin:0}
 h1 span{font-weight:400;color:#a9b5b3;margin-left:6px}
 .me{margin-left:auto;font-size:13px;color:#a9b5b3;display:flex;gap:10px;align-items:center}
 .me button{background:none;border:1px solid #56615f;color:#d8dfde;border-radius:6px;padding:3px 10px;cursor:pointer}
-nav{display:flex;gap:2px;max-width:1240px;margin:14px auto 0;overflow-x:auto}
-nav button{background:none;border:0;color:#a9b5b3;padding:10px 14px 12px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;font-weight:500}
-nav button:hover{color:#fff}
-nav button.on{color:#fff;border-bottom-color:var(--teal)}
+#top{display:flex;gap:26px;max-width:1240px;margin:14px auto 0;overflow-x:auto;align-items:flex-end}
+.ygrp{display:flex;align-items:center;gap:2px}
+.ygrp.end{margin-left:auto}
+.yl{font-size:13px;font-weight:700;color:#7f8b89;margin-right:6px;padding-bottom:3px}
+#top button{background:none;border:0;color:#a9b5b3;padding:10px 14px 12px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;font-weight:600;font-size:15px}
+#top button:hover{color:#fff}
+#top button.on{color:#fff;border-bottom-color:var(--teal)}
+#sub{display:flex;gap:4px;flex-wrap:wrap}
+#sub button{border:0;background:none;padding:6px 12px;border-radius:7px;cursor:pointer;color:var(--muted);font-weight:500}
+#sub button:hover{background:var(--bg);color:var(--ink)}
+#sub button.on{background:var(--teal-l);color:var(--teal-d);font-weight:700}
+#cmp{display:flex;gap:20px;flex-wrap:wrap;width:100%;padding-top:10px;border-top:1px dashed var(--line)}
+#cmp[hidden]{display:none}
+.bar[hidden]{display:none}
 
 .bar{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line)}
 .bar>div{max-width:1240px;margin:0 auto;padding:12px 24px;display:flex;gap:20px;align-items:center;flex-wrap:wrap}
@@ -57,6 +67,13 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 .cw{position:relative;margin-top:8px}
 .tbl.rule td{white-space:pre-line;vertical-align:top;line-height:1.6;padding:10px}
 .tbl.rule td.k{font-weight:600;white-space:nowrap}
+.maps{display:flex;gap:28px;flex-wrap:wrap;margin:4px 0 12px}
+.maps figure{margin:0}
+.maps figcaption{font-size:13px;color:var(--muted);margin-top:8px;text-align:center}
+.tilemap{display:grid;grid-template-columns:repeat(4,78px);grid-auto-rows:62px;gap:5px}
+.tile{border-radius:7px;padding:6px 8px;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink);line-height:1.15}
+.tile b{font-size:13px}.tile span{font-size:16px;font-weight:700}.tile small{font-size:11px;opacity:.75}
+.tile.dark{color:#fff}
 .sub{font-size:15px;margin:18px 0 4px;font-weight:700}
 .notes{margin:4px 0 6px;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.7}
 .btn{background:var(--teal-d);color:#fff;border:0;border-radius:7px;padding:7px 16px;cursor:pointer;font-weight:600}
@@ -85,20 +102,12 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 <header>
   <div class="hrow"><h1>의대관 모집 통계<span>연도별 비교</span></h1>
     <div class="me"><span id="who"></span><button id="logout" hidden>로그아웃</button></div></div>
-  <nav role="tablist">
-    <button class="on" data-tab="sum" aria-selected="true">요약</button>
-    <button data-tab="grade">성적대별</button>
-    <button data-tab="timing">접수 시기</button>
-    <button data-tab="dim">항목별</button>
-    <button data-tab="flow">입소·퇴소</button>
-    <button data-tab="rule">성적조건</button>
-    <button data-tab="scholar">장학제도</button>
-    <button data-tab="data">데이터 관리</button>
-  </nav>
+  <nav id="top" role="tablist" aria-label="연도·시즌"></nav>
 </header>
-<div class="bar"><div>
-  <div class="grp"><b>연도</b><span id="years"></span></div>
-  <div class="grp"><b>시즌</b><span class="segs" id="seasons"></span></div>
+<div class="bar" id="subbar"><div>
+  <nav id="sub" role="tablist" aria-label="통계 항목"></nav>
+  <div id="cmp" hidden><div class="grp"><b>연도</b><span id="years"></span></div>
+  <div class="grp"><b>시즌</b><span class="segs" id="seasons"></span></div></div>
   <span id="status"></span>
   <div id="tabTools"></div>
 </div></div>
@@ -287,7 +296,7 @@ let db = null, auth = null;
 if (!LOCAL) { const app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app); }
 
 /* ===== 상태 ===== */
-const S = { metas: [], rows: [], years: new Set(), season: '전체', tab: 'sum', pending: null, local: {} };
+const S = { metas: [], rows: [], years: new Set(), season: '전체', tab: 'sum', mode: null, cur: null, pending: null, local: {} };
 const $ = (q, el = document) => el.querySelector(q);
 const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -362,10 +371,14 @@ async function loadAll() {
   S.metas.sort((a, b) => a.year - b.year);
   autoFlag();
   const all = S.metas.map(m => m.year);
-  if (![...S.years].some(y => all.includes(y))) S.years = new Set(all.slice(-3));
-  else S.years = new Set([...S.years].filter(y => all.includes(y)));
   setStatus('');
-  renderFilters(); render();
+  const ents = topEntries();
+  if (S.mode === 'compare' && !all.length) S.mode = null;
+  if (S.mode === 'compare') S.years = new Set([...S.years].filter(y => all.includes(y)).concat(S.years.size ? [] : all.slice(-3)));
+  if (!S.mode || (S.mode === 'ys' && !ents.some(([y, ss]) => y === S.cur?.[0] && ss.includes(S.cur[1])))) {
+    if (ents.length) selectYS(ents[0][0], ents[0][1][0], true); else { S.mode = 'data'; S.tab = 'data'; }
+  }
+  renderNav(); render();
 }
 async function saveYear(year, rows, fileName) {
   const meta = { year, count: rows.length, fileName, uploadedAt: new Date().toISOString() };
@@ -401,14 +414,14 @@ function renderFilters() {
   if (!S.metas.length) yc.append(h('span', { class: 'hint' }, '저장된 연도가 없습니다'));
   S.metas.forEach(m => yc.append(h('button', {
     class: 'chip' + (S.years.has(m.year) ? ' on' : ''), 'aria-pressed': S.years.has(m.year),
-    onclick: () => { S.years.has(m.year) ? S.years.delete(m.year) : S.years.add(m.year); renderFilters(); render(); }
+    onclick: () => { S.years.has(m.year) ? S.years.delete(m.year) : S.years.add(m.year); renderNav(); render(); }
   }, String(m.year))));
   const sc = $('#seasons'); sc.innerHTML = '';
   const ss = ['전체', ...seasonsIn(S.rows.filter(r => S.years.has(r.y)))];
   if (!ss.includes(S.season)) S.season = '전체';
   ss.forEach(s => sc.append(h('button', {
     class: 'seg' + (S.season === s ? ' on' : ''), 'aria-pressed': S.season === s,
-    onclick: () => { S.season = s; renderFilters(); render(); }
+    onclick: () => { S.season = s; renderNav(); render(); }
   }, s)));
 }
 
@@ -449,8 +462,9 @@ function exportTab() {
     used.add(n);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([e.head, ...e.body]), n);
   });
-  const tabName = $('nav button.on').textContent;
-  XLSX.writeFile(wb, `모집통계_${tabName}_${yearsSel().join('-')}.xlsx`);
+  const tabName = SUBTABS.find(t => t[0] === S.tab)?.[1] || S.tab;
+  const ctx = S.mode === 'ys' ? `${S.cur[0]}_${S.cur[1]}` : `${yearsSel().join('-')}_${S.season}`;
+  XLSX.writeFile(wb, `모집통계_${ctx}_${tabName}.xlsx`);
 }
 const count = (rows, f) => rows.reduce((n, r) => n + (f(r) ? 1 : 0), 0);
 
@@ -480,45 +494,55 @@ function viewSum() {
   });
 }
 
-/* ===== 탭: 성적대별 ===== */
-function viewGrade() {
-  const all = filtered(), ys = yearsSel();
-  const tgt = $('#gradeTarget')?.value || 'all';
-  seasonsIn(all).forEach(s => {
-    const rows = all.filter(r => r.se === s);
-    const b = block(`${s} 등급합별 접수·등록`, '등급합 = 국·수·영·탐1·탐2 중 수학 포함 3과목 최저 합. 누적 등록 = 해당 등급합 이하 등록 인원.');
-    const labels = [...new Set(rows.map(r => gsLabel(r.gs)))].sort((a, c) => gsOrder(a) - gsOrder(c));
-    const head = ['등급합'], heat = [];
-    ys.forEach(y => { head.push(`${y} 접수`, `${y} 등록`, `${y} 등록률`, `${y} 누적 등록`); heat.push(head.length - 2); });
-    const cum = {}; ys.forEach(y => cum[y] = 0);
-    const body = labels.map(l => {
-      const r = [l];
-      ys.forEach(y => {
-        const g = rows.filter(x => x.y === y && gsLabel(x.gs) === l), e = count(g, x => x.in);
-        if (l !== '성적 없음') cum[y] += e;
-        r.push(g.length, e, rate(e, g.length), l === '성적 없음' ? '' : cum[y]);
-      });
-      return r;
+/* ===== 탭: 지역분포 ===== */
+const TILES = { 경기: [1, 0], 강원: [2, 0], 인천: [0, 1], 서울: [1, 1], 충북: [2, 1], 경북: [3, 1], 충남: [0, 2], 세종: [1, 2], 대전: [2, 2], 대구: [3, 2], 전북: [1, 3], 경남: [2, 3], 울산: [3, 3], 광주: [0, 4], 전남: [1, 4], 부산: [3, 4], 제주: [0, 5] };
+function agg(rows, f) {
+  const o = {};
+  rows.forEach(r => [].concat(f(r)).forEach(k => { o[k] ??= {}; o[k][r.y] ??= { a: 0, e: 0 }; o[k][r.y].a++; if (r.in) o[k][r.y].e++; }));
+  return o;
+}
+function aggTable(b, name, label, o, ys, rows, limit) {
+  const tot = {}; ys.forEach(y => tot[y] = rows.filter(r => r.y === y).length);
+  const last = ys[ys.length - 1];
+  let keys = Object.keys(o).sort((a, c) => (o[c][last]?.a || 0) - (o[a][last]?.a || 0) || a.localeCompare(c, 'ko'));
+  keys = keys.filter(k => k !== '미입력').concat(keys.includes('미입력') ? ['미입력'] : []);
+  if (limit) keys = keys.slice(0, limit);
+  const body = keys.map(k => [k, ...ys.flatMap(y => { const c = o[k][y] || { a: 0, e: 0 }; return [c.a, rate(c.a, tot[y]), c.e, rate(c.e, c.a)]; })]);
+  table(b, name, [label, ...ys.flatMap(y => [`${y} 접수`, `${y} 비중`, `${y} 등록`, `${y} 등록률`])], body, { heat: ys.map((_, i) => 2 + i * 4) });
+  return keys;
+}
+function viewRegion() {
+  const rows = filtered(), ys = yearsSel(), basis = S._mapBasis || 'a';
+  const sd = agg(rows, r => r.sd || '미입력');
+  const b = block('시·도별 분포', `거주지 주소 기준. 지도 색은 ${basis === 'a' ? '접수' : '등록'} 비중입니다.`);
+  const maps = h('div', { class: 'maps' });
+  ys.forEach(y => {
+    const tot = rows.filter(r => r.y === y && (basis === 'a' || r.in)).length;
+    const max = Math.max(1, ...Object.keys(TILES).map(k => sd[k]?.[y]?.[basis] || 0));
+    const g = h('div', { class: 'tilemap', role: 'img', 'aria-label': `${y} 시도별 ${basis === 'a' ? '접수' : '등록'} 분포` });
+    Object.entries(TILES).forEach(([k, [c, r]]) => {
+      const v = sd[k]?.[y]?.[basis] || 0, t = h('div', { class: 'tile' + (v / max > .45 ? ' dark' : ''), title: `${k} ${fmt(v)}명` },
+        h('b', {}, k), h('span', {}, fmt(v)), h('small', {}, tot ? (v / tot * 100).toFixed(1) + '%' : ''));
+      t.style.gridColumn = c + 1; t.style.gridRow = r + 1;
+      t.style.background = v ? `rgba(61,187,177,${(.12 + v / max * .88).toFixed(3)})` : 'var(--bg)';
+      g.append(t);
     });
-    const tot = ['합계']; ys.forEach(y => { const g = rows.filter(x => x.y === y), e = count(g, x => x.in); tot.push(g.length, e, rate(e, g.length), ''); });
-    tot.total = true; body.push(tot);
-    table(b, `${s} 등급합`, head, body, { heat });
-    chart(b, {
-      type: 'bar', data: {
-        labels: labels.filter(l => l !== '성적 없음'),
-        datasets: ys.map(y => ({ label: `${y} 등록`, backgroundColor: yearColor(y), data: labels.filter(l => l !== '성적 없음').map(l => count(rows, x => x.y === y && x.in && gsLabel(x.gs) === l)) }))
-      }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { title: { display: true, text: '등급합' } } } }
-    }, 240);
-
-    const b2 = block(`${s} 과목별 등급 분포`, tgt === 'in' ? '등록자 기준' : '접수 전체 기준');
-    const subj = ['국어', '수학', '영어', '탐구1', '탐구2', '한국사'];
-    ys.forEach(y => {
-      const g = rows.filter(x => x.y === y && (tgt === 'all' || x.in));
-      const bd = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => [`${k}등급`, ...subj.map((_, i) => count(g, x => x.g?.[i] === k))]);
-      bd.push(Object.assign(['평균', ...subj.map((_, i) => { const v = g.map(x => x.g?.[i]).filter(v => v != null); return v.length ? (v.reduce((a, c) => a + c, 0) / v.length).toFixed(2) : '–'; })], { total: true }));
-      table(b2, `${y} ${s} 과목등급`, [`${y}`, ...subj], bd);
-    });
+    maps.append(h('figure', {}, g, h('figcaption', {}, `${y} · ${basis === 'a' ? '접수' : '등록'} ${fmt(tot)}명`)));
   });
+  b.append(maps);
+  aggTable(b, '시도별 분포', '시·도', sd, ys, rows);
+
+  const sg = agg(rows, r => r.sg || '미입력');
+  const b2 = block('시·군·구 상위 30', '거주지 주소 기준, 최근 연도 접수 순');
+  const keys = aggTable(b2, '시군구 분포', '시·군·구', sg, ys, rows, 30);
+  const top = keys.filter(k => k !== '미입력').slice(0, 15);
+  chart(b2, {
+    type: 'bar', data: { labels: top, datasets: ys.map(y => ({ label: `${y} ${basis === 'a' ? '접수' : '등록'}`, backgroundColor: yearColor(y), data: top.map(k => sg[k]?.[y]?.[basis] || 0) })) },
+    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+  }, Math.max(240, top.length * (22 + ys.length * 6)));
+
+  const b3 = block('출신학교 지역', '출신학교에 표시된 지역 기준');
+  aggTable(b3, '출신학교 지역', '학교 지역', agg(rows, r => r.sr || '미입력'), ys, rows);
 }
 
 /* ===== 탭: 접수 시기 ===== */
@@ -873,12 +897,12 @@ function viewScholar() {
 }
 
 /* ===== 렌더 ===== */
-const VIEWS = { rule: viewRule, scholar: viewScholar, sum: viewSum, grade: viewGrade, timing: viewTiming, dim: viewDim, flow: viewFlow, data: viewData };
+const VIEWS = { rule: viewRule, scholar: viewScholar, sum: viewSum, region: viewRegion, timing: viewTiming, dim: viewDim, flow: viewFlow, data: viewData };
 function render() {
   resetView();
   const v = $('#view'); v.innerHTML = '';
   $('#tabTools').innerHTML = '';
-  if (S.tab === 'grade') $('#tabTools').append(h('label', {}, '과목 등급 기준 ', h('select', { id: 'gradeTarget', onchange: e => { S._gt = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자'))));
+  if (S.tab === 'region') $('#tabTools').append(h('label', {}, '지도 기준 ', h('select', { id: 'mapSel', onchange: e => { S._mapBasis = e.target.value; render(); } }, h('option', { value: 'a' }, '접수'), h('option', { value: 'e' }, '등록'))));
   if (S.tab === 'timing') $('#tabTools').append(
     h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
     h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자만')));
@@ -889,19 +913,46 @@ function render() {
     if (!S.years.size && !isRule) { v.append(h('p', { class: 'empty' }, '위에서 연도를 하나 이상 골라주세요.')); return; }
     $('#tabTools').append(h('button', { class: 'btn ghost', onclick: exportTab }, '이 탭 엑셀로 저장'));
   }
-  if (S.tab === 'grade' && S._gt) $('#gradeTarget').value = S._gt;
+  if (S.tab === 'region') $('#mapSel').value = S._mapBasis || 'a';
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
   if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'week'; $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
-  S._gt = $('#gradeTarget')?.value || S._gt; S._dim = $('#dimSel')?.value || S._dim;
+  S._dim = $('#dimSel')?.value || S._dim;
 }
 function setStatus(t) { $('#status').textContent = t; }
 function toast(t) { const e = $('#toast'); e.textContent = t; e.classList.add('on'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('on'), 2400); }
 
-document.querySelectorAll('nav button').forEach(bt => bt.addEventListener('click', () => {
-  document.querySelectorAll('nav button').forEach(x => { x.classList.toggle('on', x === bt); x.setAttribute('aria-selected', x === bt); });
-  S.tab = bt.dataset.tab; render();
-}));
+const SUBTABS = [['sum', '요약'], ['region', '지역분포'], ['timing', '접수 시기'], ['dim', '항목별'], ['flow', '입소·퇴소'], ['rule', '성적조건'], ['scholar', '장학제도']];
+function topEntries() {
+  const ys = [...new Set([...S.metas.map(m => m.year), ...Object.keys(RULES).map(Number)])].sort((a, b) => b - a);
+  return ys.map(y => {
+    const ss = [...new Set([...seasonsIn(S.rows.filter(r => r.y === y && r.x !== 'a')), ...Object.keys(RULES[y] || {})])];
+    ss.sort((a, b) => (SEASON_ORDER.indexOf(a) + 1 || 99) - (SEASON_ORDER.indexOf(b) + 1 || 99));
+    return [y, ss];
+  }).filter(e => e[1].length);
+}
+function selectYS(y, s, quiet) {
+  S.mode = 'ys'; S.cur = [y, s]; S.years = new Set([y]); S.season = s;
+  if (S.tab === 'data') S.tab = 'sum';
+  if (!quiet) { renderNav(); render(); }
+}
+function renderNav() {
+  const top = $('#top'); top.innerHTML = '';
+  topEntries().forEach(([y, ss]) => top.append(h('div', { class: 'ygrp' }, h('span', { class: 'yl' }, String(y)),
+    ss.map(s => { const on = S.mode === 'ys' && S.cur[0] === y && S.cur[1] === s; return h('button', { class: on ? 'on' : '', 'aria-selected': on, onclick: () => selectYS(y, s) }, s); }))));
+  const right = h('div', { class: 'ygrp end' });
+  if (S.metas.length > 1 || S.mode === 'compare') right.append(h('button', { class: S.mode === 'compare' ? 'on' : '', onclick: () => {
+    S.mode = 'compare'; S.years = new Set(S.metas.map(m => m.year).slice(-3)); S.season = S.cur?.[1] || '전체';
+    if (S.tab === 'data') S.tab = 'sum'; renderNav(); render();
+  } }, '연도 비교'));
+  right.append(h('button', { class: S.mode === 'data' ? 'on' : '', onclick: () => { S.mode = 'data'; S.tab = 'data'; renderNav(); render(); } }, '데이터 관리'));
+  top.append(right);
+  const sub = $('#sub'); sub.innerHTML = '';
+  $('#subbar').hidden = S.mode === 'data';
+  SUBTABS.forEach(([k, t]) => sub.append(h('button', { class: S.tab === k ? 'on' : '', 'aria-selected': S.tab === k, onclick: () => { S.tab = k; renderNav(); render(); } }, t)));
+  $('#cmp').hidden = S.mode !== 'compare';
+  if (S.mode === 'compare') renderFilters();
+}
 Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
 Chart.defaults.color = '#5d6766';
 Chart.defaults.animation = false;
