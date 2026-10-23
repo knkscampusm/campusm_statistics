@@ -516,59 +516,75 @@ function viewGrade() {
 }
 
 /* ===== 탭: 접수 시기 ===== */
+const WD = ['일', '월', '화', '수', '목', '금', '토'];
+const md = n => { const d = new Date(n * 864e5); return `${p2(d.getUTCMonth() + 1)}/${p2(d.getUTCDate())}`; };
+const wdOf = s => WD[new Date(dnum(s) * 864e5).getUTCDay()];
+// 입소일 기준 상대 위치: 주별은 음수 = 입소 N주 전, 양수 = 입소 후 N주차
+function relKey(a, ref, y, unit) {
+  if (unit === 'month') return monthKey(a, y);
+  const d = dnum(a) - dnum(ref);
+  if (unit === 'day') return d;
+  return d < 0 ? -Math.floor((-d - 1) / 7) - 1 : Math.floor(d / 7) + 1;
+}
+function relLabel(k, unit) {
+  if (unit === 'month') return monthLabel(k);
+  if (unit === 'day') return k < 0 ? `D-${-k}` : k === 0 ? '입소일' : `D+${k}`;
+  return k < 0 ? `입소 ${-k}주 전` : `입소 후 ${k}주차`;
+}
+function relRange(k, ref, unit) {
+  const r = dnum(ref);
+  if (unit === 'day') { const n = r + k; return `${md(n)}(${WD[new Date(n * 864e5).getUTCDay()]})`; }
+  if (unit === 'week') { const st = k < 0 ? r + 7 * k : r + 7 * (k - 1); return `${md(st)}~${md(st + 6)}`; }
+  return '';
+}
+function fillWeeks(ks, unit) {
+  if (unit !== 'week' || !ks.length) return ks;
+  const out = []; for (let k = ks[0]; k <= ks[ks.length - 1]; k++) if (k !== 0) out.push(k);
+  return out;
+}
 function viewTiming() {
-  const all = filtered(), ys = yearsSel();
+  const all = filtered(), ys = yearsSel(), unit = S._unit || 'week';
   seasonsIn(all).forEach(s => {
-    const rows = all.filter(r => r.se === s && r.a && r.x !== 't');
+    const refs = {}; ys.forEach(y => refs[y] = refDate(S.rows.filter(r => r.y === y && r.se === s)));
+    const rows = all.filter(r => r.se === s && r.a && r.x !== 't' && refs[r.y]);
     const m = {}; ys.forEach(y => m[y] = {});
     const keys = new Set();
-    rows.forEach(r => { const k = monthKey(r.a, r.y); keys.add(k); m[r.y][k] ??= { a: 0, e: 0 }; m[r.y][k].a++; if (r.in) m[r.y][k].e++; });
-    const ks = [...keys].sort((a, b) => a - b);
-    const b = block(`${s} 월별 접수 인원`, '접수일 기준. 전년 ○월은 운영 연도 전해(예: 2026년 운영이면 2025년)입니다.');
+    rows.forEach(r => { const k = relKey(r.a, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0 }; m[r.y][k].a++; if (r.in) m[r.y][k].e++; });
+    const ks = fillWeeks([...keys].sort((a, b) => a - b), unit);
+    const refNote = ys.filter(y => refs[y]).map(y => `${y} 기준 입소일 ${refs[y]}`).join(', ');
+    const b = block(`${s} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 접수 인원`, unit === 'month' ? '접수일 기준. 전년 ○월은 운영 연도의 전해입니다.' : `입소일 기준으로 연도를 맞춰 비교합니다. ${refNote}`);
     chart(b, {
-      type: 'bar', data: { labels: ks.map(monthLabel), datasets: ys.map(y => ({ label: `${y} 접수`, backgroundColor: yearColor(y), data: ks.map(k => m[y][k]?.a || 0) })) },
-      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, title: { display: true, text: '인원' } } } }
+      type: 'bar', data: { labels: ks.map(k => relLabel(k, unit)), datasets: ys.map(y => ({ label: `${y} 접수`, backgroundColor: yearColor(y), data: ks.map(k => m[y][k]?.a || 0) })) },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { ticks: { maxRotation: 60, autoSkip: true } }, y: { beginAtZero: true, title: { display: true, text: '인원' } } } }
     }, 280);
-    const body = ks.map(k => [monthLabel(k), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0 }; return [c.a, c.e, rate(c.e, c.a)]; })]);
-    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e }), { a: 0, e: 0 }); return [t.a, t.e, rate(t.e, t.a)]; })];
+    const withRange = unit !== 'month';
+    const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e]; })]);
+    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e }), { a: 0, e: 0 }); return [...(withRange ? [''] : []), t.a, t.e]; })];
     tot.total = true; body.push(tot);
-    table(b, `${s} 월별 접수`, ['접수 월', ...ys.flatMap(y => [`${y} 접수`, `${y} 중 등록`, `${y} 등록률`])], body);
-    viewMethodDate(all, s, ys);
+    table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} 중 등록`])], body);
+    viewMethodDate(all, s, ys, refs, unit);
   });
 }
-
-const WD = ['일', '월', '화', '수', '목', '금', '토'];
-function dayKey(d, unit) {
-  if (unit === 'day') return d;
-  if (unit === 'month') return d.slice(0, 7);
-  const t = dnum(d), wd = new Date(t * 864e5).getUTCDay(), mon = t - ((wd + 6) % 7);
-  return new Date(mon * 864e5).toISOString().slice(0, 10);
-}
-function dayLabel(k, unit) {
-  if (unit === 'month') return `${k.slice(0, 4)}년 ${Number(k.slice(5))}월`;
-  const wd = WD[new Date(dnum(k) * 864e5).getUTCDay()];
-  return unit === 'day' ? `${k} (${wd})` : `${k} 주`;
-}
-function viewMethodDate(all, s, ys) {
-  const unit = S._unit || 'month', onlyIn = S._basis === 'in';
+function viewMethodDate(all, s, ys, refs, unit) {
+  const onlyIn = S._basis === 'in';
   ys.forEach(y => {
+    const ref = refs[y];
     const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && (!onlyIn || r.in));
-    if (!rows.length) return;
+    if (!rows.length || !ref) return;
     const ms = Object.entries(rows.reduce((o, r) => (o[r.m] = (o[r.m] || 0) + 1, o), {})).sort((a, b) => b[1] - a[1]).map(x => x[0]);
     const grid = {};
-    rows.forEach(r => { const k = dayKey(r.a, unit); grid[k] ??= {}; grid[k][r.m] = (grid[k][r.m] || 0) + 1; });
-    const keys = Object.keys(grid).sort();
-    const b = block(`${y} ${s} 전형별 ${{ month: '월별', week: '주별', day: '일자별' }[unit]} 접수`, `${onlyIn ? '등록자만' : '접수 전체'} 기준. 주별은 월요일 시작 주로 묶습니다.`);
-    const body = keys.map(k => {
-      const g = grid[k], t = ms.reduce((a, m) => a + (g[m] || 0), 0);
-      return [dayLabel(k, unit), ...ms.map(m => g[m] || ''), t];
-    });
+    rows.forEach(r => { const k = relKey(r.a, ref, y, unit); grid[k] ??= {}; grid[k][r.m] = (grid[k][r.m] || 0) + 1; });
+    const keys = fillWeeks(Object.keys(grid).map(Number).sort((a, b) => a - b), unit);
+    const lab = k => unit === 'month' ? (k <= 0 ? `${y - 1}년 ${k + 12}월` : k > 12 ? `${y + 1}년 ${k - 12}월` : `${y}년 ${k}월`)
+      : `${relLabel(k, unit)} (${relRange(k, ref, unit)})`;
+    const b = block(`${y} ${s} 전형별 접수`, `${onlyIn ? '등록자만' : '접수 전체'} 기준`);
+    const body = keys.map(k => { const g = grid[k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0)]; });
     const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length]; tot.total = true; body.push(tot);
     chart(b, {
-      type: 'bar', data: { labels: keys.map(k => dayLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[k][m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
-      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 70, autoSkip: true } }, y: { stacked: true, title: { display: true, text: '인원' } } } }
+      type: 'bar', data: { labels: keys.map(k => relLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[k]?.[m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, title: { display: true, text: '인원' } } } }
     }, 300);
-    table(b, `${y} ${s} 전형별 접수일`, [{ month: '접수 월', week: '접수 주', day: '접수일' }[unit], ...ms, '합계'], body);
+    table(b, `${y} ${s} 전형별 접수`, [unit === 'month' ? '접수 월' : '시점', ...ms, '합계'], body);
   });
 }
 const METHOD_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6aa36f', '#9a8f7a', '#4a5a59', '#d1b56b'];
@@ -736,7 +752,7 @@ function render() {
   $('#tabTools').innerHTML = '';
   if (S.tab === 'grade') $('#tabTools').append(h('label', {}, '과목 등급 기준 ', h('select', { id: 'gradeTarget', onchange: e => { S._gt = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자'))));
   if (S.tab === 'timing') $('#tabTools').append(
-    h('label', {}, '전형별 표 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'month' }, '월별'), h('option', { value: 'week' }, '주별'), h('option', { value: 'day' }, '일별'))),
+    h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
     h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   if (S.tab !== 'data') {
@@ -746,7 +762,7 @@ function render() {
   }
   if (S.tab === 'grade' && S._gt) $('#gradeTarget').value = S._gt;
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
-  if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'month'; $('#basisSel').value = S._basis || 'all'; }
+  if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'week'; $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
   S._gt = $('#gradeTarget')?.value || S._gt; S._dim = $('#dimSel')?.value || S._dim;
 }
