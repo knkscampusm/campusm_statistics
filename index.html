@@ -83,6 +83,7 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 .hint{color:var(--muted);font-size:13px}
 .warn{color:var(--warn)} .err{color:var(--err)}
 .file input{padding:10px;border:1px dashed var(--teal);border-radius:8px;width:100%;background:var(--teal-l)}
+.flab{margin:12px 0 6px;font-size:14px;font-weight:600}
 .row{display:flex;gap:14px;align-items:center;margin-top:10px;flex-wrap:wrap}
 .yin{width:90px;padding:5px 8px;border:1px solid var(--line);border-radius:6px}
 
@@ -132,7 +133,8 @@ const COLS = {
   sc: ['출신학교'], ad: ['학생주소1', '주소'], gb: ['구분'],
   g0: ['등급 국'], g1: ['등급 수'], g2: ['등급 영'], g3: ['등급 탐1'], g4: ['등급 탐2'], g5: ['등급 한국사'],
   p0: ['백분위 국어'], p1: ['백분위 수학'], p2: ['백분위 탐1'], p3: ['백분위 탐2'],
-  sk: ['국어(선택)'], sm: ['수학(선택)'], t1: ['탐구1'], t2: ['탐구2'], l2: ['제2외']
+  sk: ['국어(선택)'], sm: ['수학(선택)'], t1: ['탐구1'], t2: ['탐구2'], l2: ['제2외'],
+  sid: ['수험번호']
 };
 const REQUIRED = ['a', 'i', 'ty'];
 const SEASON_ORDER = ['윈터스쿨', '시즌제로', '정규시즌', '반수시즌'];
@@ -200,13 +202,29 @@ function mapHeaders(headers) {
   }
   return { map, missing };
 }
-function convertSheet(ws) {
+/* 매칭 파일(수험번호·등록일·환불일) → 수험번호별 날짜 */
+function parseMatch(ws) {
+  const json = XLSX.utils.sheet_to_json(ws, { raw: true, defval: null });
+  const hs = json.length ? Object.keys(json[0]) : [];
+  const f = names => hs.find(h => names.includes(str(h)));
+  const kS = f(['수험번호']), kR = f(['등록일', '납부일']), kF = f(['환불일']);
+  if (!kS || !kR) return { err: '매칭 파일에 수험번호·등록일 열이 필요합니다.' };
+  const map = new Map();
+  json.forEach(r => {
+    const id = str(r[kS]); if (!id) return;
+    const o = map.get(id) || { rd: null, fd: null };
+    o.rd = o.rd || ymd(r[kR]); if (kF) o.fd = o.fd || ymd(r[kF]);
+    map.set(id, o);
+  });
+  return { map, size: json.length };
+}
+function convertSheet(ws, match) {
   const json = XLSX.utils.sheet_to_json(ws, { raw: true, defval: null });
   const headers = json.length ? Object.keys(json[0]) : [];
   const { map, missing } = mapHeaders(headers);
   const lack = REQUIRED.filter(k => !map[k]).map(k => COLS[k][0]);
   const get = (r, k) => (map[k] ? r[map[k]] : null);
-  const rows = [];
+  const rows = []; let matched = 0;
   for (const r of json) {
     const tyRaw = str(get(r, 'ty'));
     const a = ymd(get(r, 'a'));
@@ -217,7 +235,11 @@ function convertSheet(ws) {
     const scRg = (school.match(/\[(.+?)\]/) || [])[1] || '';
     const g = [0, 1, 2, 3, 4, 5].map(n => num(get(r, 'g' + n)));
     const p = [0, 1, 2, 3].map(n => num(get(r, 'p' + n)));
+    const mt = match ? match.get(str(get(r, 'sid'))) : null;
+    if (match && mt) matched++;
     rows.push({
+      ...(match ? { rd: mt?.rd || null, fd: mt?.fd || null } : {}),
+      sid: str(get(r, 'sid')),
       a, i, ir: i ? '' : str(iRaw), o: ymd(get(r, 'o')), e: ymd(get(r, 'e')),
       ty: tyRaw, se: seasonOf(tyRaw), m: str(get(r, 'm')) || '미입력', sx: str(get(r, 'sx')),
       by: bdS ? Number(bdS.slice(0, 4)) : null,
@@ -227,7 +249,7 @@ function convertSheet(ws) {
       sk: str(get(r, 'sk')), sm: str(get(r, 'sm')), t1: str(get(r, 't1')), t2: str(get(r, 't2')), l2: str(get(r, 'l2'))
     });
   }
-  return { rows, missing, lack, total: json.length };
+  return { rows, missing: missing.filter(m => m !== '수험번호'), lack, total: json.length, matched };
 }
 function guessYear(rows) {
   const c = {};
@@ -314,9 +336,10 @@ const yearColor = y => { const ys = [...S.years].sort((a, b) => b - a); return Y
 
 /* ===== 데이터 입출력 ===== */
 function wrap(r, y, c, j) { const e = enrich(r, y); e._raw = r; e._c = c; e._j = j; e.x = r.x || ''; return e; }
-async function saveFlags(year, chunks) {
-  if (LOCAL) return;
+async function saveFlags(year, chunks, metaPatch) {
+  if (LOCAL) { if (metaPatch) Object.assign(S.local[year].meta, metaPatch); return; }
   const b = writeBatch(db);
+  if (metaPatch) b.set(doc(db, COL, String(year)), metaPatch, { merge: true });
   chunks.forEach(k => {
     const raws = S.rows.filter(r => r.y === year && r._c === k).sort((a, c) => a._j - c._j).map(r => r._raw);
     b.set(doc(db, COL, String(year), 'rows', 'c' + String(k).padStart(3, '0')), { k, rows: raws });
@@ -380,8 +403,8 @@ async function loadAll() {
   }
   renderNav(); render();
 }
-async function saveYear(year, rows, fileName) {
-  const meta = { year, count: rows.length, fileName, uploadedAt: new Date().toISOString() };
+async function saveYear(year, rows, fileName, matched = 0) {
+  const meta = { year, count: rows.length, fileName, matched, uploadedAt: new Date().toISOString() };
   if (LOCAL) { S.local[year] = { meta, rows }; return; }
   const yid = String(year);
   const old = await getDocs(collection(db, COL, yid, 'rows'));
@@ -558,8 +581,8 @@ function relKey(a, ref, y, unit) {
 }
 function relLabel(k, unit) {
   if (unit === 'month') return monthLabel(k);
-  if (unit === 'day') return k < 0 ? `D-${-k}` : k === 0 ? '입소일' : `D+${k}`;
-  return k < 0 ? `입소 ${-k}주 전` : `입소 후 ${k}주차`;
+  if (unit === 'day') return k < 0 ? `D-${-k}` : k === 0 ? '개강일' : `D+${k}`;
+  return k < 0 ? `개강 ${-k}주 전` : `개강 후 ${k}주차`;
 }
 function relRange(k, ref, unit) {
   const r = dnum(ref);
@@ -567,53 +590,63 @@ function relRange(k, ref, unit) {
   if (unit === 'week') { const st = k < 0 ? r + 7 * k : r + 7 * (k - 1); return `${md(st)}~${md(st + 6)}`; }
   return '';
 }
-function fillWeeks(ks, unit) {
-  if (unit !== 'week' || !ks.length) return ks;
-  const out = []; for (let k = ks[0]; k <= ks[ks.length - 1]; k++) if (k !== 0) out.push(k);
+function fillWeeks(ks, unit, phase) {
+  if (unit !== 'week' || !ks.length || phase === 'post') return ks;
+  const lo = phase === 'post' ? Math.min(1, ks[0]) : ks[0], hi = phase === 'post' ? ks[ks.length - 1] : Math.max(-1, ks[ks.length - 1]);
+  const out = []; for (let k = lo; k <= hi; k++) if (k !== 0) out.push(k);
   return out;
 }
-function viewTiming() {
+const openDate = (y, s) => RULES[y]?.[s]?.open || refDate(S.rows.filter(r => r.y === y && r.se === s));
+const inPhase = (r, ref, phase) => phase === 'post' ? r.a >= ref : r.a < ref;
+function viewTiming(phase = 'pre') {
   const all = filtered(), ys = yearsSel(), unit = S._unit || 'week';
   seasonsIn(all).forEach(s => {
-    const refs = {}; ys.forEach(y => refs[y] = refDate(S.rows.filter(r => r.y === y && r.se === s)));
-    const rows = all.filter(r => r.se === s && r.a && r.x !== 't' && refs[r.y]);
+    const refs = {}; ys.forEach(y => refs[y] = openDate(y, s));
+    const rows = all.filter(r => r.se === s && r.a && r.x !== 't' && refs[r.y] && inPhase(r, refs[r.y], phase));
+    if (!rows.length) { block(`${s} ${phase === 'post' ? '개강 후' : '개강 전'} 접수`, '해당 기간 접수가 없습니다.'); return; }
     const m = {}; ys.forEach(y => m[y] = {});
     const keys = new Set();
-    rows.forEach(r => { const k = relKey(r.a, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0, c: 0 }; m[r.y][k].a++; if (r.in) m[r.y][k].e++; if (r.st === '접수 취소') m[r.y][k].c++; });
-    const ks = fillWeeks([...keys].sort((a, b) => a - b), unit);
-    const refNote = ys.filter(y => refs[y]).map(y => `${y} 기준 입소일 ${refs[y]}`).join(', ');
-    const b = block(`${s} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 접수 인원`, unit === 'month' ? '접수일 기준. 전년 ○월은 운영 연도의 전해입니다. 등록·환불은 그 주(월)에 접수한 사람 중 인원이며, 환불 = 입소 전 취소(퇴소일만 있음).' : `입소일 기준으로 연도를 맞춰 비교합니다. ${refNote}. 등록·환불은 그 주에 접수한 사람 중 인원이며, 환불 = 입소 전 취소(퇴소일만 있음).`);
+    const post = phase === 'post';
+    const L = post ? { e: '입소', c: '퇴소', n: '순입소' } : { e: '등록', c: '환불', n: '순등록' };
+    rows.forEach(r => {
+      const ev = [['a', r.a], ['e', post ? r.i : r.rd], ['c', post ? r.o : r.fd]];
+      ev.forEach(([t, d]) => { if (!d) return; const k = relKey(d, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0, c: 0 }; m[r.y][k][t]++; });
+    });
+    const ks = fillWeeks([...keys].sort((a, b) => a - b), unit, phase);
+    const refNote = ys.filter(y => refs[y]).map(y => `${y} 개강일 ${refs[y]}`).join(', ');
+    const ph = phase === 'post' ? '개강 후' : '개강 전';
+    const b = block(`${s} ${ph} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 접수 인원`, `${refNote}. ${phase === 'post' ? '개강일 당일부터의 접수' : '개강일 전날까지의 접수'}만 대상으로, 접수는 접수일, ${post ? '입소는 입소일, 퇴소는 퇴소일' : '등록은 등록일, 환불은 환불일'}이 속한 주(월)에 셉니다.${unit === 'month' ? ' 전년 ○월은 운영 연도의 전해입니다.' : ''}${!post && ys.some(y => !S.metas.find(mm => mm.year === y)?.matched) ? ' ※ 매칭 파일이 없는 연도는 등록·환불이 비어 있습니다.' : ''}`);
     chart(b, {
       type: 'bar', data: { labels: ks.map(k => relLabel(k, unit)), datasets: ys.flatMap((y, i) => {
         const one = ys.length === 1, p = one ? '' : `${y} `;
         return [
           { label: `${p}접수`, backgroundColor: one ? '#c9d6d4' : yearColor(y) + '55', data: ks.map(k => m[y][k]?.a || 0) },
-          { label: `${p}등록`, backgroundColor: one ? '#3dbbb1' : yearColor(y), data: ks.map(k => m[y][k]?.e || 0) },
-          { label: `${p}환불`, backgroundColor: one ? '#c9706b' : `rgba(201,112,107,${1 - i * .3})`, data: ks.map(k => m[y][k]?.c || 0) }];
+          { label: `${p}${L.e}`, backgroundColor: one ? '#3dbbb1' : yearColor(y), data: ks.map(k => m[y][k]?.e || 0) },
+          { label: `${p}${L.c}`, backgroundColor: one ? '#c9706b' : `rgba(201,112,107,${1 - i * .3})`, data: ks.map(k => m[y][k]?.c || 0) }];
       }) },
       options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { ticks: { maxRotation: 60, autoSkip: true } }, y: { beginAtZero: true, title: { display: true, text: '인원' } } } }
     }, 280);
     const withRange = unit !== 'month';
-    const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0, c: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e, rate(c.e, c.a), c.c]; })]);
-    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e, c: o.c + c.c }), { a: 0, e: 0, c: 0 }); return [...(withRange ? [''] : []), t.a, t.e, rate(t.e, t.a), t.c]; })];
+    const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0, c: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e, c.c, c.e - c.c]; })]);
+    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e, c: o.c + c.c }), { a: 0, e: 0, c: 0 }); return [...(withRange ? [''] : []), t.a, t.e, t.c, t.e - t.c]; })];
     tot.total = true; body.push(tot);
-    table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} 등록`, `${y} 등록률`, `${y} 환불`])], body);
-    viewMethodDate(all, s, ys, refs, unit);
+    table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} ${L.e}`, `${y} ${L.c}`, `${y} ${L.n}`])], body);
+    viewMethodDate(all, s, ys, refs, unit, phase);
   });
 }
-function viewMethodDate(all, s, ys, refs, unit) {
+function viewMethodDate(all, s, ys, refs, unit, phase) {
   const onlyIn = S._basis === 'in';
   ys.forEach(y => {
     const ref = refs[y];
-    const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && (!onlyIn || r.in));
+    const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && ref && inPhase(r, ref, phase) && (!onlyIn || (phase === 'post' ? r.in : r.rd)));
     if (!rows.length || !ref) return;
     const ms = Object.entries(rows.reduce((o, r) => (o[r.m] = (o[r.m] || 0) + 1, o), {})).sort((a, b) => b[1] - a[1]).map(x => x[0]);
     const grid = {};
     rows.forEach(r => { const k = relKey(r.a, ref, y, unit); grid[k] ??= {}; grid[k][r.m] = (grid[k][r.m] || 0) + 1; });
-    const keys = fillWeeks(Object.keys(grid).map(Number).sort((a, b) => a - b), unit);
+    const keys = fillWeeks(Object.keys(grid).map(Number).sort((a, b) => a - b), unit, phase);
     const lab = k => unit === 'month' ? (k <= 0 ? `${y - 1}년 ${k + 12}월` : k > 12 ? `${y + 1}년 ${k - 12}월` : `${y}년 ${k}월`)
       : `${relLabel(k, unit)} (${relRange(k, ref, unit)})`;
-    const b = block(`${y} ${s} 전형별 접수`, `${onlyIn ? '등록자만' : '접수 전체'} 기준`);
+    const b = block(`${y} ${s} ${phase === 'post' ? '개강 후' : '개강 전'} 전형별 접수`, `접수일 기준, ${onlyIn ? (phase === 'post' ? '입소자만' : '등록일이 있는 사람만') : '접수 전체'}`);
     const body = keys.map(k => { const g = grid[k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0)]; });
     const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length]; tot.total = true; body.push(tot);
     chart(b, {
@@ -707,7 +740,7 @@ function viewData() {
   else b.append(h('div', { class: 'tw' }, h('table', { class: 'tbl' },
     h('thead', {}, h('tr', {}, ['연도', '행 수', '파일', '저장 시각', ''].map((c, i) => h('th', { class: i === 1 ? 'n' : '' }, c)))),
     h('tbody', {}, S.metas.map(m => h('tr', {},
-      h('td', {}, String(m.year)), h('td', { class: 'n' }, fmt(m.count)), h('td', {}, m.fileName || ''),
+      h('td', {}, String(m.year)), h('td', { class: 'n' }, fmt(m.count)), h('td', {}, (m.fileName || '') + (m.matched ? ` + 매칭 ${fmt(m.matched)}행` : ' (매칭 없음)')),
       h('td', {}, (m.uploadedAt || '').replace('T', ' ').slice(0, 16)),
       h('td', { class: 'n' }, h('button', { class: 'btn ghost', onclick: async () => {
         if (!confirm(`${m.year}년 데이터를 삭제할까요? 되돌릴 수 없습니다.`)) return;
@@ -715,29 +748,47 @@ function viewData() {
       } }, '삭제'))))))));
 
   viewOutliers();
-  const u = block('엑셀 올리기', '원생마스터 다운로드 파일을 그대로 올리면 됩니다. 성명·생년월일(연도만 보관)·상세 주소(시·군·구만 보관)·비고·수험번호는 저장하지 않습니다.');
+  const u = block('엑셀 올리기', '원생마스터 다운로드 파일을 그대로 올리면 됩니다. 수험번호(매칭용)와 성적(등급·백분위·선택과목)은 저장하고, 성명·생년월일(연도만 보관)·상세 주소(시·군·구만 보관)·비고는 저장하지 않습니다.');
   const file = h('input', { type: 'file', accept: '.xlsx,.xls,.csv', id: 'file' });
+  const mfile = h('input', { type: 'file', accept: '.xlsx,.xls,.csv', id: 'mfile' });
   const prev = h('div', { id: 'prev' });
+  const P = { ws: null, name: '', match: null };
+  const refresh = () => {
+    if (!P.ws) return;
+    const res = convertSheet(P.ws, P.match?.map);
+    if (res.lack.length) { prev.innerHTML = ''; prev.append(h('p', { class: 'err' }, `필수 열이 없습니다: ${res.lack.join(', ')}. 첫 행이 열 제목인지 확인해주세요.`)); return; }
+    S.pending = { rows: res.rows, fileName: P.name, matched: res.matched };
+    renderPreview(prev, res, guessYear(res.rows), !!P.match);
+  };
+  const read = async f => { const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }); return wb.Sheets[wb.SheetNames[0]]; };
   file.addEventListener('change', async () => {
     const f = file.files[0]; if (!f) return;
     prev.innerHTML = '읽는 중…';
-    try {
-      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const res = convertSheet(ws);
-      if (res.lack.length) { prev.innerHTML = ''; prev.append(h('p', { class: 'err' }, `필수 열이 없습니다: ${res.lack.join(', ')}. 첫 행이 열 제목인지 확인해주세요.`)); return; }
-      S.pending = { rows: res.rows, fileName: f.name };
-      renderPreview(prev, res, guessYear(res.rows));
-    } catch (e) { prev.innerHTML = ''; prev.append(h('p', { class: 'err' }, '파일을 읽지 못했습니다: ' + e.message)); }
+    try { P.ws = await read(f); P.name = f.name; refresh(); }
+    catch (e) { prev.innerHTML = ''; prev.append(h('p', { class: 'err' }, '파일을 읽지 못했습니다: ' + e.message)); }
   });
-  u.append(h('label', { class: 'file' }, file), prev);
+  mfile.addEventListener('change', async () => {
+    const f = mfile.files[0]; if (!f) { P.match = null; refresh(); return; }
+    try {
+      const m = parseMatch(await read(f));
+      if (m.err) { alert(m.err); mfile.value = ''; P.match = null; } else P.match = m;
+      refresh();
+    } catch (e) { alert('매칭 파일을 읽지 못했습니다: ' + e.message); }
+  });
+  viewMatchOnly();
+  u.append(
+    h('p', { class: 'flab' }, '① 원생마스터 (필수)'), h('label', { class: 'file' }, file),
+    h('p', { class: 'flab' }, '② 등록일·환불일 매칭 파일 (선택, 수험번호·등록일·환불일 열)'), h('label', { class: 'file' }, mfile),
+    prev);
 }
-function renderPreview(prev, res, year) {
+function renderPreview(prev, res, year, hasMatch) {
   prev.innerHTML = '';
   const yin = h('input', { type: 'number', value: year, min: 2000, max: 2100, class: 'yin', 'aria-label': '운영 연도' });
   const ss = {}; res.rows.forEach(r => { ss[r.ty] ??= { se: r.se, a: 0, e: 0 }; ss[r.ty].a++; if (r.i) ss[r.ty].e++; });
   prev.append(...[
     h('p', {}, `${fmt(res.rows.length)}행을 읽었습니다.`),
+    hasMatch ? h('p', {}, `매칭: ${fmt(res.matched)}행 연결 · 등록일 ${fmt(res.rows.filter(r => r.rd).length)}건 · 환불일 ${fmt(res.rows.filter(r => r.fd).length)}건 (연결 안 된 ${fmt(res.rows.length - res.matched)}행은 등록·환불 없음으로 처리)`)
+      : h('p', { class: 'warn' }, '매칭 파일 없이 저장하면 접수 시기 탭의 등록·환불이 비어 보입니다.'),
     res.missing.length ? h('p', { class: 'warn' }, `없는 열(해당 통계는 비어 보입니다): ${res.missing.join(', ')}`) : null,
     h('div', { class: 'tw' }, h('table', { class: 'tbl' },
       h('thead', {}, h('tr', {}, ['원본 시험유형', '묶이는 시즌', '접수', '입소일 있음'].map((c, i) => h('th', { class: i > 1 ? 'n' : '' }, c)))),
@@ -749,10 +800,48 @@ function renderPreview(prev, res, year) {
         if (!y) return;
         if (S.metas.some(m => m.year === y) && !confirm(`${y}년 데이터가 이미 있습니다. 새 파일로 교체할까요?`)) return;
         e.target.disabled = true; e.target.textContent = '저장 중…';
-        try { await saveYear(y, S.pending.rows, S.pending.fileName); S.years.add(y); await loadAll(); toast(`${y}년 데이터를 저장했습니다`); }
+        try { await saveYear(y, S.pending.rows, S.pending.fileName, S.pending.matched || 0); S.years.add(y); await loadAll(); toast(`${y}년 데이터를 저장했습니다`); }
         catch (err) { e.target.disabled = false; e.target.textContent = `${y}년으로 저장`; alert('저장하지 못했습니다: ' + err.message); }
       } }, `${year}년으로 저장`))].filter(Boolean));
   yin.addEventListener('input', () => { $('.row .btn', prev).textContent = `${yin.value}년으로 저장`; });
+}
+
+/* 저장된 연도에 매칭 파일만 붙이기 */
+function viewMatchOnly() {
+  if (!S.metas.length) return;
+  const b = block('매칭 파일만 올리기', '이미 저장된 연도에 등록일·환불일을 붙이거나 새 매칭 파일로 바꿉니다. 수험번호로 연결합니다.');
+  const ysel = h('select', { class: 'yin', 'aria-label': '연도' }, [...S.metas].reverse().map(m => h('option', { value: m.year }, String(m.year))));
+  const f = h('input', { type: 'file', accept: '.xlsx,.xls,.csv' });
+  const out = h('div');
+  const btn = h('button', { class: 'btn', disabled: '' }, '매칭 저장');
+  let M = null;
+  const check = () => {
+    out.innerHTML = ''; btn.disabled = true; if (!M) return;
+    const y = Number(ysel.value), rows = S.rows.filter(r => r.y === y);
+    if (!rows.some(r => r._raw.sid)) { out.append(h('p', { class: 'err' }, `${y}년 데이터에는 수험번호가 없습니다. 아래 "엑셀 올리기"에서 원생마스터와 매칭 파일을 같이 올려 다시 저장해주세요.`)); return; }
+    const hit = rows.filter(r => M.map.has(r._raw.sid)).length;
+    out.append(h('p', {}, `${y}년 ${fmt(rows.length)}행 중 ${fmt(hit)}행 연결 (매칭 파일 ${fmt(M.size)}행). 연결 안 된 행은 등록·환불 없음으로 바뀝니다.`));
+    btn.disabled = false;
+  };
+  f.addEventListener('change', async () => {
+    const x = f.files[0]; if (!x) { M = null; check(); return; }
+    try { const wb = XLSX.read(await x.arrayBuffer(), { type: 'array' }); M = parseMatch(wb.Sheets[wb.SheetNames[0]]); if (M.err) { alert(M.err); M = null; } }
+    catch (e) { alert('파일을 읽지 못했습니다: ' + e.message); M = null; }
+    check();
+  });
+  ysel.addEventListener('change', check);
+  btn.addEventListener('click', async () => {
+    const y = Number(ysel.value), rows = S.rows.filter(r => r.y === y), chunks = new Set(); let hit = 0;
+    rows.forEach(r => {
+      const mt = M.map.get(r._raw.sid), rd = mt?.rd || null, fd = mt?.fd || null;
+      if (mt) hit++;
+      if (r._raw.rd !== rd || r._raw.fd !== fd) { r._raw.rd = rd; r._raw.fd = fd; r.rd = rd; r.fd = fd; chunks.add(r._c); }
+    });
+    btn.disabled = true; btn.textContent = '저장 중…';
+    try { await saveFlags(y, chunks, { matched: hit }); await loadAll(); toast(`${y}년 매칭을 저장했습니다 (${fmt(hit)}행)`); }
+    catch (e) { alert('저장하지 못했습니다: ' + e.message); btn.disabled = false; btn.textContent = '매칭 저장'; }
+  });
+  b.append(h('div', { class: 'row' }, h('label', {}, '연도 ', ysel), h('label', { class: 'file', style: 'flex:1' }, f), btn), out);
 }
 
 const XOPT = [['i', '포함'], ['t', '접수 시기만 제외'], ['a', '전체 제외']];
@@ -784,6 +873,7 @@ function viewOutliers() {
 const RULES = {
   2026: {
     '시즌제로': {
+      open: '2026-01-02',
       period: '접수 2025년 12월 8일(월) 오전 10시 ~ 입소 2026년 1월 1일(목)',
       methods: [
         ['메디컬 전형', '2026학년도 수능 또는 평가원 기준 국·수(미적분)·영·과탐(한 과목) 중\n[수능] 3과목 합 4등급 이내 (수학 필수)\n[평가원] 3과목 합 3등급 이내 (수학 필수)\n* 등록자에게 수업 선택·기숙사 타입 선택 우선권 부여', '12월 8일(월) 오전 10시부터\n수강료 납부 선착순 마감'],
@@ -818,6 +908,7 @@ const RULES = {
       }
     },
     '정규시즌': {
+      open: '2026-02-20',
       period: '접수 2026년 1월 9일(금) 오전 10시 ~ 입소 2026년 2월 20일(금)',
       methods: [
         ['메디컬 전형', '2026학년도 수능 또는 평가원 기준 국·수(미적분)·영·과탐(한 과목) 중\n[수능] 3과목 합 4등급 이내 (수학 필수)\n[평가원] 3과목 합 3등급 이내 (수학 필수)\n* 등록자에게 수업 선택·기숙사 타입 선택 우선권 부여', '1월 9일(금) 오전 10시부터\n수강료 납부 선착순 마감'],
@@ -903,15 +994,15 @@ function viewScholar() {
 }
 
 /* ===== 렌더 ===== */
-const VIEWS = { rule: viewRule, scholar: viewScholar, sum: viewSum, region: viewRegion, timing: viewTiming, dim: viewDim, flow: viewFlow, data: viewData };
+const VIEWS = { rule: viewRule, scholar: viewScholar, sum: viewSum, region: viewRegion, timing: () => viewTiming('pre'), after: () => viewTiming('post'), dim: viewDim, flow: viewFlow, data: viewData };
 function render() {
   resetView();
   const v = $('#view'); v.innerHTML = '';
   $('#tabTools').innerHTML = '';
   if (S.tab === 'region') $('#tabTools').append(h('label', {}, '지도 기준 ', h('select', { id: 'mapSel', onchange: e => { S._mapBasis = e.target.value; render(); } }, h('option', { value: 'a' }, '접수'), h('option', { value: 'e' }, '등록'))));
-  if (S.tab === 'timing') $('#tabTools').append(
+  if (S.tab === 'timing' || S.tab === 'after') $('#tabTools').append(
     h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
-    h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자만')));
+    h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, S.tab === 'after' ? '입소자만' : '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   const isRule = S.tab === 'rule' || S.tab === 'scholar';
   if (S.tab !== 'data') {
@@ -921,14 +1012,14 @@ function render() {
   }
   if (S.tab === 'region') $('#mapSel').value = S._mapBasis || 'a';
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
-  if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'week'; $('#basisSel').value = S._basis || 'all'; }
+  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = S._unit || 'week'; $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
   S._dim = $('#dimSel')?.value || S._dim;
 }
 function setStatus(t) { $('#status').textContent = t; }
 function toast(t) { const e = $('#toast'); e.textContent = t; e.classList.add('on'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('on'), 2400); }
 
-const SUBTABS = [['sum', '요약'], ['region', '지역분포'], ['timing', '접수 시기'], ['dim', '항목별'], ['flow', '입소·퇴소'], ['rule', '성적조건'], ['scholar', '장학제도']];
+const SUBTABS = [['sum', '요약'], ['region', '지역분포'], ['timing', '접수 시기'], ['after', '개강 후'], ['dim', '항목별'], ['flow', '입소·퇴소'], ['rule', '성적조건'], ['scholar', '장학제도']];
 function topEntries() {
   const ys = [...new Set([...S.metas.map(m => m.year), ...Object.keys(RULES).map(Number)])].sort((a, b) => b - a);
   return ys.map(y => {
