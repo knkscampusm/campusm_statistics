@@ -508,8 +508,44 @@ function viewTiming() {
       return [g.length, count(g, r => r.in)];
     })]);
     table(b2, `${s} 주별 접수`, ['주차', ...ys.flatMap(y => [`${y} 접수`, `${y} 중 등록`])], body);
+    viewMethodDate(all, s, ys);
   });
 }
+
+const WD = ['일', '월', '화', '수', '목', '금', '토'];
+function dayKey(d, unit) {
+  if (unit === 'day') return d;
+  const t = dnum(d), wd = new Date(t * 864e5).getUTCDay(), mon = t - ((wd + 6) % 7);
+  return new Date(mon * 864e5).toISOString().slice(0, 10);
+}
+function dayLabel(k, unit) {
+  const wd = WD[new Date(dnum(k) * 864e5).getUTCDay()];
+  return unit === 'day' ? `${k} (${wd})` : `${k} 주`;
+}
+function viewMethodDate(all, s, ys) {
+  const unit = S._unit || 'day', onlyIn = S._basis === 'in';
+  ys.forEach(y => {
+    const rows = all.filter(r => r.se === s && r.y === y && r.a && (!onlyIn || r.in));
+    if (!rows.length) return;
+    const ms = Object.entries(rows.reduce((o, r) => (o[r.m] = (o[r.m] || 0) + 1, o), {})).sort((a, b) => b[1] - a[1]).map(x => x[0]);
+    const grid = {};
+    rows.forEach(r => { const k = dayKey(r.a, unit); grid[k] ??= {}; grid[k][r.m] = (grid[k][r.m] || 0) + 1; });
+    const keys = Object.keys(grid).sort();
+    const b = block(`${y} ${s} 전형별 ${unit === 'day' ? '일자별' : '주별'} 접수`, `${onlyIn ? '등록자만' : '접수 전체'} 기준. 주별은 월요일 시작 주로 묶습니다.`);
+    const cum = {}; ms.forEach(m => cum[m] = 0); let cumT = 0;
+    const body = keys.map(k => {
+      const g = grid[k], t = ms.reduce((a, m) => a + (g[m] || 0), 0); cumT += t;
+      return [dayLabel(k, unit), ...ms.map(m => g[m] || ''), t, cumT];
+    });
+    const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length, '']; tot.total = true; body.push(tot);
+    chart(b, {
+      type: 'bar', data: { labels: keys.map(k => dayLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[k][m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
+      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 70, autoSkip: true } }, y: { stacked: true, title: { display: true, text: '인원' } } } }
+    }, 300);
+    table(b, `${y} ${s} 전형별 접수일`, ['접수일', ...ms, '합계', '누적'], body);
+  });
+}
+const METHOD_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6aa36f', '#9a8f7a', '#4a5a59', '#d1b56b'];
 
 /* ===== 탭: 항목별 ===== */
 const DIMS = {
@@ -647,6 +683,9 @@ function render() {
   const v = $('#view'); v.innerHTML = '';
   $('#tabTools').innerHTML = '';
   if (S.tab === 'grade') $('#tabTools').append(h('label', {}, '과목 등급 기준 ', h('select', { id: 'gradeTarget', onchange: e => { S._gt = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자'))));
+  if (S.tab === 'timing') $('#tabTools').append(
+    h('label', {}, '전형별 표 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'day' }, '일별'), h('option', { value: 'week' }, '주별'))),
+    h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   if (S.tab !== 'data') {
     if (!S.metas.length) { v.append(h('p', { class: 'empty' }, '저장된 데이터가 없습니다. 데이터 관리 탭에서 엑셀을 올려주세요.')); return; }
@@ -655,6 +694,7 @@ function render() {
   }
   if (S.tab === 'grade' && S._gt) $('#gradeTarget').value = S._gt;
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
+  if (S.tab === 'timing') { $('#unitSel').value = S._unit || 'day'; $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
   S._gt = $('#gradeTarget')?.value || S._gt; S._dim = $('#dimSel')?.value || S._dim;
 }
