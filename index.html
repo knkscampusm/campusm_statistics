@@ -604,6 +604,7 @@ function viewTiming(phase = 'pre') {
     const refs = {}; ys.forEach(y => refs[y] = openDate(y, s));
     const rows = all.filter(r => r.se === s && r.a && r.x !== 't' && refs[r.y] && inPhase(r, refs[r.y], phase));
     if (!rows.length) { block(`${s} ${phase === 'post' ? '개강 후' : '개강 전'} 접수`, '해당 기간 접수가 없습니다.'); return; }
+    if ((S._view || 'reg') === 'method') { viewMethodDate(all, s, ys, refs, unit, phase); return; }
     const m = {}; ys.forEach(y => m[y] = {});
     const keys = new Set();
     const post = phase === 'post';
@@ -631,7 +632,6 @@ function viewTiming(phase = 'pre') {
     const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e, c: o.c + c.c }), { a: 0, e: 0, c: 0 }); return [...(withRange ? [''] : []), t.a, t.e, t.c, t.e - t.c]; })];
     tot.total = true; body.push(tot);
     table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} ${L.e}`, `${y} ${L.c}`, `${y} ${L.n}`])], body);
-    viewMethodDate(all, s, ys, refs, unit, phase);
   });
 }
 function viewMethodDate(all, s, ys, refs, unit, phase) {
@@ -1001,8 +1001,10 @@ function render() {
   $('#tabTools').innerHTML = '';
   if (S.tab === 'region') $('#tabTools').append(h('label', {}, '지도 기준 ', h('select', { id: 'mapSel', onchange: e => { S._mapBasis = e.target.value; render(); } }, h('option', { value: 'a' }, '접수'), h('option', { value: 'e' }, '등록'))));
   if (S.tab === 'timing' || S.tab === 'after') $('#tabTools').append(
+    h('span', { class: 'segs', role: 'group', 'aria-label': '보기' }, [['reg', S.tab === 'after' ? '입소별' : '등록별'], ['method', '전형별']].map(([k, t]) =>
+      h('button', { class: 'seg' + ((S._view || 'reg') === k ? ' on' : ''), 'aria-pressed': (S._view || 'reg') === k, onclick: () => { S._view = k; render(); } }, t))),
     h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
-    h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, S.tab === 'after' ? '입소자만' : '등록자만')));
+    (S._view || 'reg') === 'reg' ? null : h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, S.tab === 'after' ? '입소자만' : '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   const isRule = S.tab === 'rule' || S.tab === 'scholar';
   if (S.tab !== 'data') {
@@ -1012,7 +1014,7 @@ function render() {
   }
   if (S.tab === 'region') $('#mapSel').value = S._mapBasis || 'a';
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
-  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = S._unit || 'week'; $('#basisSel').value = S._basis || 'all'; }
+  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = S._unit || 'week'; if ($('#basisSel')) $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
   S._dim = $('#dimSel')?.value || S._dim;
 }
