@@ -298,17 +298,49 @@ const YEAR_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6a
 const yearColor = y => { const ys = [...S.years].sort((a, b) => b - a); return YEAR_COLORS[ys.indexOf(y) % YEAR_COLORS.length] || '#999'; };
 
 /* ===== 데이터 입출력 ===== */
+function wrap(r, y, c, j) { const e = enrich(r, y); e._raw = r; e._c = c; e._j = j; e.x = r.x || ''; return e; }
+async function saveFlags(year, chunks) {
+  if (LOCAL) return;
+  const b = writeBatch(db);
+  chunks.forEach(k => {
+    const raws = S.rows.filter(r => r.y === year && r._c === k).sort((a, c) => a._j - c._j).map(r => r._raw);
+    b.set(doc(db, COL, String(year), 'rows', 'c' + String(k).padStart(3, '0')), { k, rows: raws });
+  });
+  await b.commit();
+}
+/* 본 접수 시작일보다 앞선 접수 = 튀는 값 후보 */
+function mainStart(rows) {
+  const ds = rows.map(r => r.a).filter(Boolean).sort();
+  const need = Math.max(5, Math.ceil(ds.length * 0.01));
+  for (let i = 0; i < ds.length; i++) {
+    const end = dnum(ds[i]) + 6;
+    let n = 0; for (let j = i; j < ds.length && dnum(ds[j]) <= end; j++) n++;
+    if (n >= need) return ds[i];
+  }
+  return ds[0] || null;
+}
+function outlierList() {
+  const out = [];
+  S.metas.forEach(m => {
+    const ry = S.rows.filter(r => r.y === m.year);
+    seasonsIn(ry).forEach(se => {
+      const rs = ry.filter(r => r.se === se), st = mainStart(rs);
+      rs.forEach(r => { if (r.x || (st && r.a && r.a < st)) out.push({ r, st }); });
+    });
+  });
+  return out.sort((a, b) => a.r.y - b.r.y || (a.r.a || '').localeCompare(b.r.a || ''));
+}
 async function loadAll() {
   setStatus('불러오는 중…');
   S.metas = []; S.rows = [];
   if (LOCAL) {
-    for (const [y, v] of Object.entries(S.local)) { S.metas.push(v.meta); S.rows.push(...v.rows.map(r => enrich(r, Number(y)))); }
+    for (const [y, v] of Object.entries(S.local)) { S.metas.push(v.meta); v.rows.forEach((r, j) => S.rows.push(wrap(r, Number(y), Math.floor(j / CHUNK), j))); }
   } else {
     const ms = await getDocs(collection(db, COL));
     await Promise.all(ms.docs.map(async d => {
       const m = d.data(); S.metas.push(m);
       const cs = await getDocs(collection(db, COL, d.id, 'rows'));
-      cs.docs.map(x => x.data()).sort((a, b) => a.k - b.k).forEach(c => S.rows.push(...c.rows.map(r => enrich(r, m.year))));
+      cs.docs.map(x => x.data()).sort((a, b) => a.k - b.k).forEach(c => c.rows.forEach((r, j) => S.rows.push(wrap(r, m.year, c.k, j))));
     }));
   }
   S.metas.sort((a, b) => a.year - b.year);
@@ -340,7 +372,7 @@ async function deleteYear(year) {
 
 /* ===== 필터 ===== */
 function filtered(season = S.season) {
-  return S.rows.filter(r => S.years.has(r.y) && (season === '전체' || r.se === season));
+  return S.rows.filter(r => r.x !== 'a' && S.years.has(r.y) && (season === '전체' || r.se === season));
 }
 const yearsSel = () => [...S.years].sort((a, b) => a - b);
 function seasonsIn(rows) {
@@ -476,7 +508,7 @@ function viewGrade() {
 function viewTiming() {
   const all = filtered(), ys = yearsSel();
   seasonsIn(all).forEach(s => {
-    const rows = all.filter(r => r.se === s && r.a);
+    const rows = all.filter(r => r.se === s && r.a && r.x !== 't');
     const b = block(`${s} 접수 누적 추이`, '가로축은 그 해 기준 입소일(가장 많은 입소일)로부터 몇 주 전·후인지입니다. 연도별 입소일이 달라도 같은 선상에서 비교됩니다.');
     const PRE = 20, POST = 30;
     const refs = {}; ys.forEach(y => refs[y] = refDate(rows.filter(r => r.y === y)));
@@ -525,7 +557,7 @@ function dayLabel(k, unit) {
 function viewMethodDate(all, s, ys) {
   const unit = S._unit || 'day', onlyIn = S._basis === 'in';
   ys.forEach(y => {
-    const rows = all.filter(r => r.se === s && r.y === y && r.a && (!onlyIn || r.in));
+    const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && (!onlyIn || r.in));
     if (!rows.length) return;
     const ms = Object.entries(rows.reduce((o, r) => (o[r.m] = (o[r.m] || 0) + 1, o), {})).sort((a, b) => b[1] - a[1]).map(x => x[0]);
     const grid = {};
@@ -636,6 +668,7 @@ function viewData() {
         await deleteYear(m.year); await loadAll(); toast(`${m.year}년 데이터를 삭제했습니다`);
       } }, '삭제'))))))));
 
+  viewOutliers();
   const u = block('엑셀 올리기', '원생마스터 다운로드 파일을 그대로 올리면 됩니다. 성명·생년월일(연도만 보관)·상세 주소(시·군·구만 보관)·비고·수험번호는 저장하지 않습니다.');
   const file = h('input', { type: 'file', accept: '.xlsx,.xls,.csv', id: 'file' });
   const prev = h('div', { id: 'prev' });
@@ -674,6 +707,31 @@ function renderPreview(prev, res, year) {
         catch (err) { e.target.disabled = false; e.target.textContent = `${y}년으로 저장`; alert('저장하지 못했습니다: ' + err.message); }
       } }, `${year}년으로 저장`))].filter(Boolean));
   yin.addEventListener('input', () => { $('.row .btn', prev).textContent = `${yin.value}년으로 저장`; });
+}
+
+const XOPT = [['', '포함'], ['t', '접수 시기만 제외'], ['a', '전체 제외']];
+function viewOutliers() {
+  if (!S.metas.length) return;
+  const list = outlierList();
+  const b = block('튀는 값 확인', '본 접수가 시작되기 전에 따로 떨어져 들어온 접수입니다. 실제 다닌 학생이면 "접수 시기만 제외", 테스트·다른 과정·중복이면 "전체 제외"를 고르세요.');
+  if (!list.length) { b.append(h('p', { class: 'empty' }, '튀는 값이 없습니다.')); return; }
+  const changes = new Map();
+  const btn = h('button', { class: 'btn', disabled: '', onclick: async () => {
+    btn.disabled = true; btn.textContent = '저장 중…';
+    const touched = {};
+    changes.forEach((v, r) => { r._raw.x = v || null; if (!v) delete r._raw.x; r.x = v; (touched[r.y] ??= new Set()).add(r._c); });
+    try { for (const [y, ks] of Object.entries(touched)) await saveFlags(Number(y), ks); toast('처리 상태를 저장했습니다'); render(); }
+    catch (e) { alert('저장하지 못했습니다: ' + e.message); btn.disabled = false; btn.textContent = '변경 저장'; }
+  } }, '변경 저장');
+  b.append(h('div', { class: 'tw' }, h('table', { class: 'tbl' },
+    h('thead', {}, h('tr', {}, ['연도', '시즌', '접수일', '본 접수 시작', '차이', '전형', '입소일', '상태', '처리'].map(c => h('th', {}, c)))),
+    h('tbody', {}, list.map(({ r, st }) => h('tr', {},
+      h('td', {}, String(r.y)), h('td', {}, r.se), h('td', {}, r.a || '–'), h('td', {}, st || '–'),
+      h('td', {}, st && r.a && r.a < st ? `${dnum(st) - dnum(r.a)}일 빠름` : '–'),
+      h('td', {}, r.m), h('td', {}, r.i || r.ir || '–'), h('td', {}, r.st),
+      h('td', {}, h('select', { 'aria-label': '처리', onchange: e => { e.target.value === r.x ? changes.delete(r) : changes.set(r, e.target.value); btn.disabled = !changes.size; } },
+        XOPT.map(([v, t]) => { const o = h('option', { value: v }, t); if (v === r.x) o.selected = true; return o; })))))))),
+    h('div', { class: 'row' }, btn));
 }
 
 /* ===== 렌더 ===== */
