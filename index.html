@@ -55,6 +55,10 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 .tbl tr.total td{font-weight:700;border-top:1px solid var(--ink);background:#f7f9f9}
 .tbl tbody tr:hover td{box-shadow:inset 0 0 0 9999px rgba(38,48,47,.03)}
 .cw{position:relative;margin-top:8px}
+.tbl.rule td{white-space:pre-line;vertical-align:top;line-height:1.6;padding:10px}
+.tbl.rule td.k{font-weight:600;white-space:nowrap}
+.sub{font-size:15px;margin:18px 0 4px;font-weight:700}
+.notes{margin:4px 0 6px;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.7}
 .btn{background:var(--teal-d);color:#fff;border:0;border-radius:7px;padding:7px 16px;cursor:pointer;font-weight:600}
 .btn:disabled{opacity:.6;cursor:default}
 .btn.ghost{background:#fff;color:var(--teal-d);border:1px solid var(--teal)}
@@ -87,6 +91,8 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
     <button data-tab="timing">접수 시기</button>
     <button data-tab="dim">항목별</button>
     <button data-tab="flow">입소·퇴소</button>
+    <button data-tab="rule">성적조건</button>
+    <button data-tab="scholar">장학제도</button>
     <button data-tab="data">데이터 관리</button>
   </nav>
 </header>
@@ -744,8 +750,130 @@ function viewOutliers() {
     h('div', { class: 'row' }, btn));
 }
 
+/* ===== 모집요강 고정 자료 (연도 → 시즌) ===== */
+const RULES = {
+  2026: {
+    '시즌제로': {
+      period: '접수 2025년 12월 8일(월) 오전 10시 ~ 입소 2026년 1월 1일(목)',
+      methods: [
+        ['메디컬 전형', '2026학년도 수능 또는 평가원 기준 국·수(미적분)·영·과탐(한 과목) 중\n[수능] 3과목 합 4등급 이내 (수학 필수)\n[평가원] 3과목 합 3등급 이내 (수학 필수)\n* 등록자에게 수업 선택·기숙사 타입 선택 우선권 부여', '12월 8일(월) 오전 10시부터\n수강료 납부 선착순 마감'],
+        ['우선선발 전형', '2026학년도 수능 또는 평가원 기준 국·수·영·탐·탐 중\n[수능] 3과목 합 6등급 이내 (수학 필수)\n[평가원] 3과목 합 5등급 이내 (수학 필수)\n* 영어 2등급은 1등급으로 적용\n[내신] 일반계고 1.2 이내 / 특목·전국자사고 3.0 이내\n(고1~고3 1학기 내신, 2026년 졸업자만)', '수강료 납부 선착순 마감'],
+        ['선착순 전형', '2026학년도 수능 또는 평가원 기준 국·수·영·탐·탐 중\n[수능/평가원] 3과목 합 8등급 이내 (수학 필수)\n* ① 또는 ② 중 하나 적용\n① 영어 2등급은 1등급으로 적용\n② 과탐 2과목 응시 시 3과목 등급합 -1\n[내신] 일반계고 1.6 이내 / 특목·전국자사고 3.4 이내\n(고1~고3 1학기 내신, 2026년 졸업자만)', '수강료 납부 선착순 마감'],
+        ['특별 전형', '전국 의학계열(의·치·한·약·수), 서울대, 연세대, 고려대, KAIST, 포항공대 재학(합격)생', '수강료 납부 선착순 마감'],
+        ['성적순 전형', '2026학년도 수능·평가원 또는 2025학년도 수능/평가원 국·수·영·탐·탐 중\n[수능/평가원] 3과목 합 10등급 이내\n[내신] 일반계고 2.0 이내 / 특목·전국자사고 4.0 이내\n* 선발 기준에 따라 합격자 선발', '차수별 합격자 발표 (아래 표)'],
+        ['면접 전형', '과학고·영재고 재학생 또는 졸업생\n서강대, 성균관대, 한양대, 중앙대 재학(합격)생', '면접일자 개별 안내\n전화 면접 후 합격자 개별 안내'],
+        ['유시험 전형', '시험일: 2025년 12월 27일(토) 오전 10시\n고사장: 강남대성학원(서울 강남역)\n1교시 국어(공통) 20문제 40분\n2교시 수학(수Ⅰ·수Ⅱ) 20문제 60분', '접수 12월 8일(월) 오전 10시 ~ 12월 26일(금) 오후 5시\n합격자 발표 12월 28일(일) 오전 10시']
+      ],
+      rounds: [['1차', '12/8(월)~12/14(일)', '12/15(월) 오전 10시'], ['2차', '12/15(월)~12/21(일)', '12/22(월) 오전 10시'], ['3차', '12/22(월)~12/25(목)', '12/26(금) 오전 10시']],
+      notes: ['각 전형별 성적 조건 중 해당하는 성적 하나만 있으면 지원 가능', '선발 환산점수 계산기로 6평·9평·수능 중 유리한 성적표 1개만 제출', '합격자 발표: 홈페이지 조회 및 개별 안내', '정규시즌은 지원 자격이 변동될 수 있음'],
+      scholar: {
+        general: [
+          ['2026학년도 수능', '백분위 합 290점 이상', '[교습비+독서실비+기숙사비+식비+콘텐츠비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 287점 이상', '[교습비+독서실비+기숙사비+식비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 284점 이상', '[교습비+독서실비+식비] 100% + [기숙사비·교재비] 50% 면제', '3개'],
+          ['', '백분위 합 282점 이상', '[교습비+독서실비+식비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 278점 이상', '[교습비+독서실비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 276점 이상', '[교습비] 50% + [독서실비] 100% 면제', '5개'],
+          ['', '백분위 합 274점 이상', '[교습비] 30% + [독서실비] 100% 면제', '5개'],
+          ['2026학년도 평가원', '백분위 합 290점 이상', '[교습비+독서실비] 100% + [교재비] 50% 면제', '3개']
+        ],
+        generalNotes: ['백분위 합 = 국어 + 수학 + 탐구 2과목 백분위 평균 (소수점 반올림, 예: 90·93 → 91.5 → 92)', '수능 성적에 한해 백분위 합 274점 이상이면 과탐Ⅱ 1과목 +8점, 2과목 +12점 가산', '영어 2등급 이내 (3등급 이하는 등급당 백분위 2점씩 감점)', '장학 혜택에 명시되지 않은 항목은 별도 납부', '일반장학 대상자는 최소 수강 강의 수에 맞춰 수업 시수 조정 가능', '정규시즌 장학 기준은 변경될 수 있음'],
+        naesin: [
+          ['내신 1.2 이내 & 2026 수능 국·수·영·탐 등급 합 7', '[교습비+독서실비+식비] 100% + [교재비] 50% 면제'],
+          ['내신 1.2 이내 & 2026 수능 국·수·탐 또는 국·수·영 등급 합 6', '[교습비+독서실비] 100% + [교재비] 50% 면제'],
+          ['내신 1.3 이내 & 2026 수능 국·수·탐 또는 국·수·영 등급 합 7', '[교습비] 50% + [독서실비] 100% 면제']
+        ],
+        naesinNotes: ['탐구 등급은 두 과목 평균의 소수점 버림 (예: 2등급·5등급 → 3등급)', '홈페이지 시즌ZERO 모집요강 내신 산출 계산기의 최종 내신 등급 적용 (국·수·영·탐·한국사만 산출)'],
+        special: [['의학·치의학계열 재학생', '내부 기준에 따라 학원에서 안내'], ['과학고·영재고 졸업(예정)생', '전화 면접 후 내부 기준에 따라 학원에서 안내']]
+      }
+    },
+    '정규시즌': {
+      period: '접수 2026년 1월 9일(금) 오전 10시 ~ 입소 2026년 2월 20일(금)',
+      methods: [
+        ['메디컬 전형', '2026학년도 수능 또는 평가원 기준 국·수(미적분)·영·과탐(한 과목) 중\n[수능] 3과목 합 4등급 이내 (수학 필수)\n[평가원] 3과목 합 3등급 이내 (수학 필수)\n* 등록자에게 수업 선택·기숙사 타입 선택 우선권 부여', '1월 9일(금) 오전 10시부터\n수강료 납부 선착순 마감'],
+        ['우선선발 전형', '2026학년도 수능 또는 평가원 기준 국·수·영·탐·탐 중\n[수능] 3과목 합 6등급 이내 (수학 필수)\n[평가원] 3과목 합 5등급 이내 (수학 필수)\n* 26 수능 영어 2등급은 1등급, 3등급은 2등급으로 적용\n[내신] 일반계고 1.2 이내 / 특목·전국자사고 3.0 이내\n(고1~고3 전체 내신, 2026년 졸업자만)', '수강료 납부 선착순 마감'],
+        ['선착순 전형', '2026학년도 수능 또는 평가원 기준 국·수·영·탐·탐 중\n[수능/평가원] 3과목 합 8등급 이내 (수학 필수)\n* ① 또는 ② 중 하나 적용\n① 26 수능 영어 2등급은 1등급, 3등급은 2등급으로 적용\n② 과탐 2과목 응시 시 3과목 등급합 -1\n[내신] 일반계고 1.6 이내 / 특목·전국자사고 3.4 이내\n(고1~고3 전체 내신, 2026년 졸업자만)', '수강료 납부 선착순 마감'],
+        ['특별 전형', '전국 의학계열(의·치·한·약·수), 서울대, 연세대, 고려대, KAIST, 포항공대 재학(합격)생', '수강료 납부 선착순 마감'],
+        ['성적순 전형', '2026학년도 수능·평가원 또는 2025학년도 수능/평가원 국·수·영·탐·탐 중\n[수능/평가원] 3과목 합 10등급 이내\n[내신] 일반계고 2.0 이내 / 특목·전국자사고 4.0 이내\n* 선발 기준에 따라 합격자 선발', '차수별 합격자 발표 (아래 표)'],
+        ['면접 전형', '과학고·영재고 재학생 또는 졸업생\n서강대, 성균관대, 한양대, 중앙대 재학(합격)생', '면접일자 개별 안내\n전화 면접 후 합격자 개별 안내'],
+        ['유시험 전형', '시험일: 2026년 2월 7일(토) 오후 2시\n고사장: 강남대성학원(서울 강남역)\n1교시 국어(공통) 20문제 40분\n2교시 수학(수Ⅰ·수Ⅱ) 20문제 60분', '접수 1월 9일(금) 오전 10시 ~ 2월 6일(금) 오후 5시\n합격자 발표 2월 9일(월) 오후 1시']
+      ],
+      rounds: [['1차', '1/9(금)~1/21(수)', '1/22(목) 오전 10시'], ['2차', '1/22(목)~1/28(수)', '1/29(목) 오전 10시'], ['3차', '1/29(목)~2/4(수)', '2/5(목) 오전 10시'], ['4차', '2/5(목)~2/11(수)', '2/12(목) 오전 10시']],
+      notes: ['각 전형별 성적 조건 중 해당하는 성적 하나만 있으면 지원 가능', '선발 환산점수 계산기로 6평·9평·수능 중 유리한 성적표 1개만 제출', '합격자 발표: 홈페이지 조회 및 개별 안내'],
+      scholar: {
+        general: [
+          ['2026학년도 수능', '백분위 합 292점 이상', '[교습비+독서실비+기숙사비+식비+콘텐츠비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 289점 이상', '[교습비+독서실비+기숙사비+식비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 286점 이상', '[교습비+독서실비+식비] 100% + [기숙사비·교재비] 50% 면제', '3개'],
+          ['', '백분위 합 284점 이상', '[교습비+독서실비+식비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 281점 이상', '[교습비+독서실비] 100% + [교재비] 50% 면제', '3개'],
+          ['', '백분위 합 278점 이상', '[교습비] 50% + [독서실비] 100% 면제', '5개'],
+          ['', '백분위 합 276점 이상', '[교습비] 30% + [독서실비] 100% 면제', '5개'],
+          ['2026학년도 평가원', '백분위 합 290점 이상', '[교습비+독서실비] 100% + [교재비] 50% 면제', '3개']
+        ],
+        generalNotes: ['백분위 합 = 국어 + 수학 + 탐구 2과목 백분위 평균 (소수점 반올림, 예: 90·93 → 91.5 → 92)', '수능 성적에 한해 백분위 합 274점 이상이면 과탐Ⅱ 1과목 +8점, 2과목 +12점 가산', '영어 2등급 이내 (3등급 이하는 등급당 백분위 2점씩 감점)', '장학 혜택에 명시되지 않은 항목은 별도 납부', '일반장학 대상자는 최소 수강 강의 수에 맞춰 수업 시수 조정 가능'],
+        naesin: [
+          ['내신 1.2 이내 & 2026 수능 국·수·영·탐 등급 합 7', '[교습비+독서실비+식비] 100% + [교재비] 50% 면제'],
+          ['내신 1.2 이내 & 2026 수능 국·수·탐 또는 국·수·영 등급 합 6', '[교습비+독서실비] 100% + [교재비] 50% 면제'],
+          ['내신 1.3 이내 & 2026 수능 국·수·탐 또는 국·수·영 등급 합 7', '[교습비] 50% + [독서실비] 100% 면제']
+        ],
+        naesinNotes: ['탐구 등급은 두 과목 평균의 소수점 버림 (예: 2등급·5등급 → 3등급)', '홈페이지 정규시즌 모집요강 내신 산출 계산기의 최종 내신 등급 적용 (국·수·영·탐·한국사만 산출)'],
+        special: [['의학·치의학계열 재학생', '내부 기준에 따라 학원에서 안내'], ['과학고·영재고 졸업(예정)생', '전화 면접 후 내부 기준에 따라 학원에서 안내']]
+      }
+    }
+  }
+};
+
+/* ===== 탭: 성적조건 / 장학제도 ===== */
+function ruleTargets() {
+  const ys = (S.years.size ? yearsSel() : Object.keys(RULES).map(Number)).filter(y => RULES[y]).sort((a, b) => b - a);
+  const out = [];
+  ys.forEach(y => Object.keys(RULES[y]).sort((a, b) => SEASON_ORDER.indexOf(a) - SEASON_ORDER.indexOf(b))
+    .forEach(s => { if (S.season === '전체' || S.season === s) out.push([y, s, RULES[y][s]]); }));
+  return out;
+}
+function textTable(parent, name, head, body, opt = {}) {
+  exportables.push({ name, head, body });
+  parent.append(h('div', { class: 'tw' }, h('table', { class: 'tbl rule' },
+    h('thead', {}, h('tr', {}, head.map((c, i) => h('th', { class: (opt.num || []).includes(i) ? 'n' : '' }, c)))),
+    h('tbody', {}, body.map(r => h('tr', { class: r.total ? 'total' : '' }, r.map((c, i) => h('td', { class: [(opt.num || []).includes(i) ? 'n' : '', i === 0 ? 'k' : ''].join(' ') }, typeof c === 'number' ? fmt(c) : (c ?? '')))))))));
+}
+const notesEl = list => h('ul', { class: 'notes' }, list.map(t => h('li', {}, t)));
+function noRules() { $('#view').append(h('p', { class: 'empty' }, `모집요강 자료는 ${Object.keys(RULES).join(', ')}년만 들어 있습니다.`)); }
+function viewRule() {
+  const ts = ruleTargets(); if (!ts.length) return noRules();
+  ts.forEach(([y, s, R]) => {
+    const b = block(`${y} ${s} 모집 전형`, R.period);
+    const rows = S.rows.filter(r => r.y === y && r.se === s && r.x !== 'a');
+    const has = rows.length > 0;
+    const body = R.methods.map(([m, q, p]) => {
+      const g = rows.filter(r => r.m === m), e = count(g, r => r.in);
+      return [m, q, p, ...(has ? [g.length, e, g.length ? pct(e, g.length) : '–'] : [])];
+    });
+    textTable(b, `${y} ${s} 전형`, ['전형', '지원 자격', '접수 및 등록', ...(has ? ['접수', '등록', '등록률'] : [])], body, { num: has ? [3, 4, 5] : [] });
+    b.append(h('h3', { class: 'sub' }, '성적순 전형 차수별 합격자 발표'));
+    textTable(b, `${y} ${s} 발표일정`, ['차수', '접수 기간', '합격자 발표'], R.rounds);
+    b.append(notesEl(R.notes));
+  });
+}
+function viewScholar() {
+  const ts = ruleTargets(); if (!ts.length) return noRules();
+  ts.forEach(([y, s, R]) => {
+    const C = R.scholar;
+    const b = block(`${y} ${s} 장학 제도`, R.period);
+    b.append(h('h3', { class: 'sub' }, '일반 장학'));
+    textTable(b, `${y} ${s} 일반장학`, ['성적 기준', '자격 요건 (국·수·탐(2) 백분위 합)', '장학 혜택', '최소 수강 강의 수'], C.general);
+    b.append(notesEl(C.generalNotes));
+    b.append(h('h3', { class: 'sub' }, '내신 장학'));
+    textTable(b, `${y} ${s} 내신장학`, ['자격 요건', '장학 혜택'], C.naesin);
+    b.append(notesEl(C.naesinNotes));
+    b.append(h('h3', { class: 'sub' }, '특별 장학'));
+    textTable(b, `${y} ${s} 특별장학`, ['자격 요건', '장학 혜택'], C.special);
+  });
+}
+
 /* ===== 렌더 ===== */
-const VIEWS = { sum: viewSum, grade: viewGrade, timing: viewTiming, dim: viewDim, flow: viewFlow, data: viewData };
+const VIEWS = { rule: viewRule, scholar: viewScholar, sum: viewSum, grade: viewGrade, timing: viewTiming, dim: viewDim, flow: viewFlow, data: viewData };
 function render() {
   resetView();
   const v = $('#view'); v.innerHTML = '';
@@ -755,9 +883,10 @@ function render() {
     h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
     h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
+  const isRule = S.tab === 'rule' || S.tab === 'scholar';
   if (S.tab !== 'data') {
-    if (!S.metas.length) { v.append(h('p', { class: 'empty' }, '저장된 데이터가 없습니다. 데이터 관리 탭에서 엑셀을 올려주세요.')); return; }
-    if (!S.years.size) { v.append(h('p', { class: 'empty' }, '위에서 연도를 하나 이상 골라주세요.')); return; }
+    if (!S.metas.length && !isRule) { v.append(h('p', { class: 'empty' }, '저장된 데이터가 없습니다. 데이터 관리 탭에서 엑셀을 올려주세요.')); return; }
+    if (!S.years.size && !isRule) { v.append(h('p', { class: 'empty' }, '위에서 연도를 하나 이상 골라주세요.')); return; }
     $('#tabTools').append(h('button', { class: 'btn ghost', onclick: exportTab }, '이 탭 엑셀로 저장'));
   }
   if (S.tab === 'grade' && S._gt) $('#gradeTarget').value = S._gt;
