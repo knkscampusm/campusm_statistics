@@ -579,19 +579,25 @@ function viewTiming() {
     const rows = all.filter(r => r.se === s && r.a && r.x !== 't' && refs[r.y]);
     const m = {}; ys.forEach(y => m[y] = {});
     const keys = new Set();
-    rows.forEach(r => { const k = relKey(r.a, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0 }; m[r.y][k].a++; if (r.in) m[r.y][k].e++; });
+    rows.forEach(r => { const k = relKey(r.a, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0, c: 0 }; m[r.y][k].a++; if (r.in) m[r.y][k].e++; if (r.st === '접수 취소') m[r.y][k].c++; });
     const ks = fillWeeks([...keys].sort((a, b) => a - b), unit);
     const refNote = ys.filter(y => refs[y]).map(y => `${y} 기준 입소일 ${refs[y]}`).join(', ');
-    const b = block(`${s} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 접수 인원`, unit === 'month' ? '접수일 기준. 전년 ○월은 운영 연도의 전해입니다.' : `입소일 기준으로 연도를 맞춰 비교합니다. ${refNote}`);
+    const b = block(`${s} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 접수 인원`, unit === 'month' ? '접수일 기준. 전년 ○월은 운영 연도의 전해입니다. 등록·환불은 그 주(월)에 접수한 사람 중 인원이며, 환불 = 입소 전 취소(퇴소일만 있음).' : `입소일 기준으로 연도를 맞춰 비교합니다. ${refNote}. 등록·환불은 그 주에 접수한 사람 중 인원이며, 환불 = 입소 전 취소(퇴소일만 있음).`);
     chart(b, {
-      type: 'bar', data: { labels: ks.map(k => relLabel(k, unit)), datasets: ys.map(y => ({ label: `${y} 접수`, backgroundColor: yearColor(y), data: ks.map(k => m[y][k]?.a || 0) })) },
+      type: 'bar', data: { labels: ks.map(k => relLabel(k, unit)), datasets: ys.flatMap((y, i) => {
+        const one = ys.length === 1, p = one ? '' : `${y} `;
+        return [
+          { label: `${p}접수`, backgroundColor: one ? '#c9d6d4' : yearColor(y) + '55', data: ks.map(k => m[y][k]?.a || 0) },
+          { label: `${p}등록`, backgroundColor: one ? '#3dbbb1' : yearColor(y), data: ks.map(k => m[y][k]?.e || 0) },
+          { label: `${p}환불`, backgroundColor: one ? '#c9706b' : `rgba(201,112,107,${1 - i * .3})`, data: ks.map(k => m[y][k]?.c || 0) }];
+      }) },
       options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { ticks: { maxRotation: 60, autoSkip: true } }, y: { beginAtZero: true, title: { display: true, text: '인원' } } } }
     }, 280);
     const withRange = unit !== 'month';
-    const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e]; })]);
-    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e }), { a: 0, e: 0 }); return [...(withRange ? [''] : []), t.a, t.e]; })];
+    const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0, c: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e, rate(c.e, c.a), c.c]; })]);
+    const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e, c: o.c + c.c }), { a: 0, e: 0, c: 0 }); return [...(withRange ? [''] : []), t.a, t.e, rate(t.e, t.a), t.c]; })];
     tot.total = true; body.push(tot);
-    table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} 중 등록`])], body);
+    table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} 등록`, `${y} 등록률`, `${y} 환불`])], body);
     viewMethodDate(all, s, ys, refs, unit);
   });
 }
