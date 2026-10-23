@@ -319,6 +319,16 @@ function mainStart(rows) {
   }
   return ds[0] || null;
 }
+/* 처리 안 한 튀는 값은 기본으로 접수 시기에서 제외 */
+function autoFlag() {
+  S.metas.forEach(m => {
+    const ry = S.rows.filter(r => r.y === m.year);
+    seasonsIn(ry).forEach(se => {
+      const rs = ry.filter(r => r.se === se), st = mainStart(rs);
+      rs.forEach(r => { if (!r._raw.x && st && r.a && r.a < st) { r.x = 't'; r.auto = true; } });
+    });
+  });
+}
 function outlierList() {
   const out = [];
   S.metas.forEach(m => {
@@ -344,6 +354,7 @@ async function loadAll() {
     }));
   }
   S.metas.sort((a, b) => a.year - b.year);
+  autoFlag();
   const all = S.metas.map(m => m.year);
   if (![...S.years].some(y => all.includes(y))) S.years = new Set(all.slice(-3));
   else S.years = new Set([...S.years].filter(y => all.includes(y)));
@@ -515,20 +526,21 @@ function viewTiming() {
     let lo = 0, hi = 0;
     ys.forEach(y => rows.filter(r => r.y === y && refs[y]).forEach(r => { const w = weeksBefore(r.a, refs[y]); lo = Math.max(lo, Math.min(w, PRE)); hi = Math.max(hi, Math.min(-w, POST)); }));
     const xs = []; for (let w = lo; w >= -hi; w--) xs.push(w);
+    const xc = [lo + 1, ...xs];
     const lab = w => (w > 0 ? `${w}주 전` : w === 0 ? '입소 주' : `${-w}주 후`);
     const ds = [], mile = [];
     ys.forEach(y => {
       const ref = refs[y]; if (!ref) return;
       const ry = rows.filter(r => r.y === y), ws = ry.map(r => weeksBefore(r.a, ref));
-      const data = xs.map(x => ws.filter(w => w >= x || (x === lo && w > lo)).length);
+      const data = xc.map(x => ws.filter(w => w >= x || (x === lo && w > lo)).length);
       ds.push({ label: `${y} 접수`, data, borderColor: yearColor(y), backgroundColor: yearColor(y), tension: .25, pointRadius: 0, borderWidth: 2.5 });
-      ds.push({ label: `${y} 등록`, data: xs.map(x => ry.filter((r, i) => r.in && (ws[i] >= x || (x === lo && ws[i] > lo))).length), borderColor: yearColor(y), borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 });
+      ds.push({ label: `${y} 등록`, data: xc.map(x => ry.filter((r, i) => r.in && (ws[i] >= x || (x === lo && ws[i] > lo))).length), borderColor: yearColor(y), borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 });
       const pre = ry.filter(r => dnum(r.a) <= dnum(ref)).map(r => r.a).sort();
       const at = q => { if (!pre.length) return '–'; const d = pre[Math.max(0, Math.ceil(pre.length * q) - 1)]; return `${d} (${weeksBefore(d, ref)}주 전)`; };
       mile.push([String(y), ref, pre[0] ? `${pre[0]} (${weeksBefore(pre[0], ref)}주 전)` : '–', at(.25), at(.5), at(.75), pre.length, ry.length - pre.length]);
     });
     chart(b, {
-      type: 'line', data: { labels: xs.map(lab), datasets: ds },
+      type: 'line', data: { labels: xc.map(lab), datasets: ds },
       options: { maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, title: { display: true, text: '누적 인원' } } } }
     }, 320);
     table(b, `${s} 접수 시점`, ['연도', '기준 입소일', '첫 접수', '입소 전 접수 25%', '50%', '75%', '입소일까지 접수', '입소 후 접수'], mile);
@@ -709,17 +721,17 @@ function renderPreview(prev, res, year) {
   yin.addEventListener('input', () => { $('.row .btn', prev).textContent = `${yin.value}년으로 저장`; });
 }
 
-const XOPT = [['', '포함'], ['t', '접수 시기만 제외'], ['a', '전체 제외']];
+const XOPT = [['i', '포함'], ['t', '접수 시기만 제외'], ['a', '전체 제외']];
 function viewOutliers() {
   if (!S.metas.length) return;
   const list = outlierList();
-  const b = block('튀는 값 확인', '본 접수가 시작되기 전에 따로 떨어져 들어온 접수입니다. 실제 다닌 학생이면 "접수 시기만 제외", 테스트·다른 과정·중복이면 "전체 제외"를 고르세요.');
+  const b = block('튀는 값 확인', '본 접수가 시작되기 전에 따로 떨어져 들어온 접수입니다. 처음엔 자동으로 접수 시기 그래프·표에서 빠집니다. 실제 다닌 학생이면 "접수 시기만 제외", 테스트·다른 과정·중복이면 "전체 제외"를 고르세요.');
   if (!list.length) { b.append(h('p', { class: 'empty' }, '튀는 값이 없습니다.')); return; }
   const changes = new Map();
   const btn = h('button', { class: 'btn', disabled: '', onclick: async () => {
     btn.disabled = true; btn.textContent = '저장 중…';
     const touched = {};
-    changes.forEach((v, r) => { r._raw.x = v || null; if (!v) delete r._raw.x; r.x = v; (touched[r.y] ??= new Set()).add(r._c); });
+    changes.forEach((v, r) => { r._raw.x = v; r.x = v; r.auto = false; (touched[r.y] ??= new Set()).add(r._c); });
     try { for (const [y, ks] of Object.entries(touched)) await saveFlags(Number(y), ks); toast('처리 상태를 저장했습니다'); render(); }
     catch (e) { alert('저장하지 못했습니다: ' + e.message); btn.disabled = false; btn.textContent = '변경 저장'; }
   } }, '변경 저장');
@@ -728,8 +740,8 @@ function viewOutliers() {
     h('tbody', {}, list.map(({ r, st }) => h('tr', {},
       h('td', {}, String(r.y)), h('td', {}, r.se), h('td', {}, r.a || '–'), h('td', {}, st || '–'),
       h('td', {}, st && r.a && r.a < st ? `${dnum(st) - dnum(r.a)}일 빠름` : '–'),
-      h('td', {}, r.m), h('td', {}, r.i || r.ir || '–'), h('td', {}, r.st),
-      h('td', {}, h('select', { 'aria-label': '처리', onchange: e => { e.target.value === r.x ? changes.delete(r) : changes.set(r, e.target.value); btn.disabled = !changes.size; } },
+      h('td', {}, r.m), h('td', {}, r.i || r.ir || '–'), h('td', {}, r.st + (r.auto ? ' · 자동 제외' : '')),
+      h('td', {}, h('select', { 'aria-label': '처리', onchange: e => { e.target.value === r.x && !r.auto ? changes.delete(r) : changes.set(r, e.target.value); btn.disabled = !changes.size; } },
         XOPT.map(([v, t]) => { const o = h('option', { value: v }, t); if (v === r.x) o.selected = true; return o; })))))))),
     h('div', { class: 'row' }, btn));
 }
