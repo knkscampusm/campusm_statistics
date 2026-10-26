@@ -596,22 +596,27 @@ function fillWeeks(ks, unit, phase) {
   const out = []; for (let k = lo; k <= hi; k++) if (k !== 0) out.push(k);
   return out;
 }
+/* 단위 기본값: 정규시즌 개강 후는 월별, 나머지는 주별. 바꾸면 탭·시즌별로 기억 */
+const unitKey = () => `${S.tab}|${S.season}`;
+const curUnit = () => S._units?.[unitKey()] || (S.tab === 'after' && S.season === '정규시즌' ? 'month' : 'week');
 const openDate = (y, s) => RULES[y]?.[s]?.open || refDate(S.rows.filter(r => r.y === y && r.se === s));
 const inPhase = (r, ref, phase) => phase === 'post' ? r.a >= ref : r.a < ref;
 function viewTiming(phase = 'pre') {
-  const all = filtered(), ys = yearsSel(), unit = S._unit || 'week';
+  const all = filtered(), ys = yearsSel(), unit = curUnit();
   seasonsIn(all).forEach(s => {
     const refs = {}; ys.forEach(y => refs[y] = openDate(y, s));
     const rows = all.filter(r => r.se === s && r.a && r.x !== 't' && refs[r.y] && inPhase(r, refs[r.y], phase));
     if (!rows.length) { block(`${s} ${phase === 'post' ? '개강 후' : '개강 전'} 접수`, '해당 기간 접수가 없습니다.'); return; }
     if ((S._view || 'reg') === 'method') { viewMethodDate(all, s, ys, refs, unit, phase); return; }
-    const m = {}; ys.forEach(y => m[y] = {});
+    const m = {}, mg = {}; ys.forEach(y => { m[y] = {}; mg[y] = {}; });
     const keys = new Set();
     const post = phase === 'post';
     const L = post ? { e: '입소', c: '퇴소', n: '순입소' } : { e: '등록', c: '환불', n: '순등록' };
     rows.forEach(r => {
       const ev = [['a', r.a], ['e', post ? r.i : r.rd], ['c', post ? r.o : r.fd]];
-      ev.forEach(([t, d]) => { if (!d) return; const k = relKey(d, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0, c: 0 }; m[r.y][k][t]++; });
+      const end = post && RULES[r.y]?.[s]?.end;
+      ev.forEach(([t, d]) => { if (!d || (end && t !== 'a' && d >= end)) return; const k = relKey(d, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0, c: 0 }; m[r.y][k][t]++;
+        if (r.sx === '남' || r.sx === '여') { mg[r.y][k] ??= {}; mg[r.y][k][t + r.sx] = (mg[r.y][k][t + r.sx] || 0) + 1; } });
     });
     const ks = fillWeeks([...keys].sort((a, b) => a - b), unit, phase);
     const refNote = ys.filter(y => refs[y]).map(y => `${y} 개강일 ${refs[y]}`).join(', ');
@@ -631,7 +636,21 @@ function viewTiming(phase = 'pre') {
     const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0, c: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e, c.c, c.e - c.c]; })]);
     const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e, c: o.c + c.c }), { a: 0, e: 0, c: 0 }); return [...(withRange ? [''] : []), t.a, t.e, t.c, t.e - t.c]; })];
     tot.total = true; body.push(tot);
-    table(b, `${s} 접수 인원`, [unit === 'month' ? '접수 월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} ${L.e}`, `${y} ${L.c}`, `${y} ${L.n}`])], body);
+    table(b, `${s} 접수 인원`, [unit === 'month' ? '월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} ${L.e}`, `${y} ${L.c}`, `${y} ${L.n}`])], body);
+    if (S._gender) ys.forEach(y => {
+      const bg = block(`${ys.length > 1 ? y + ' ' : ''}${s} ${ph} 남녀별`, '위 표와 같은 기준을 남·여로 나눈 인원입니다. 성별이 비어 있는 행은 빠집니다.');
+      const g = (k, t) => mg[y][k]?.[t] || 0;
+      const C = { a: ['#9fb0ae', '#d5dedd'], e: ['#1f8a82', '#8fd8d1'], c: ['#a24f4a', '#e3aaa6'] };
+      chart(bg, {
+        type: 'bar', data: { labels: ks.map(k => relLabel(k, unit)), datasets: [['a', '접수'], ['e', L.e], ['c', L.c]].flatMap(([t, n]) => ['남', '여'].map((x, j) => ({ label: `${n} ${x}`, stack: t, backgroundColor: C[t][j], data: ks.map(k => g(k, t + x)) }))) },
+        options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, beginAtZero: true, title: { display: true, text: '인원' } } } }
+      }, 280);
+      const row = (lab, rng, f) => [lab, ...(withRange ? [rng] : []), f('a남'), f('a여'), f('e남'), f('e여'), f('c남'), f('c여'), rate(f('a여'), f('a남') + f('a여'))];
+      const bd = ks.map(k => row(relLabel(k, unit), refs[y] ? relRange(k, refs[y], unit) : '', t => g(k, t)));
+      const sum = t => ks.reduce((n, k) => n + g(k, t), 0);
+      const tt = row('합계', '', sum); tt.total = true; bd.push(tt);
+      table(bg, `${y} ${s} 남녀별`, [unit === 'month' ? '월' : '시점', ...(withRange ? ['기간'] : []), '접수 남', '접수 여', `${L.e} 남`, `${L.e} 여`, `${L.c} 남`, `${L.c} 여`, '접수 여학생 비율'], bd);
+    });
   });
 }
 function viewMethodDate(all, s, ys, refs, unit, phase) {
@@ -647,13 +666,15 @@ function viewMethodDate(all, s, ys, refs, unit, phase) {
     const lab = k => unit === 'month' ? (k <= 0 ? `${y - 1}년 ${k + 12}월` : k > 12 ? `${y + 1}년 ${k - 12}월` : `${y}년 ${k}월`)
       : `${relLabel(k, unit)} (${relRange(k, ref, unit)})`;
     const b = block(`${y} ${s} ${phase === 'post' ? '개강 후' : '개강 전'} 전형별 접수`, `접수일 기준, ${onlyIn ? (phase === 'post' ? '입소자만' : '등록일이 있는 사람만') : '접수 전체'}`);
-    const body = keys.map(k => { const g = grid[k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0)]; });
-    const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length]; tot.total = true; body.push(tot);
+    const gx = {}; if (S._gender) rows.forEach(r => { if (r.sx !== '남' && r.sx !== '여') return; const k = relKey(r.a, ref, y, unit); gx[k] ??= { 남: 0, 여: 0 }; gx[k][r.sx]++; });
+    const gcol = k => S._gender ? [gx[k]?.남 || 0, gx[k]?.여 || 0] : [];
+    const body = keys.map(k => { const g = grid[k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0), ...gcol(k)]; });
+    const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length, ...(S._gender ? [count(rows, r => r.sx === '남'), count(rows, r => r.sx === '여')] : [])]; tot.total = true; body.push(tot);
     chart(b, {
       type: 'bar', data: { labels: keys.map(k => relLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[k]?.[m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
       options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, title: { display: true, text: '인원' } } } }
     }, 300);
-    table(b, `${y} ${s} 전형별 접수`, [unit === 'month' ? '접수 월' : '시점', ...ms, '합계'], body);
+    table(b, `${y} ${s} 전형별 접수`, [unit === 'month' ? '접수 월' : '시점', ...ms, '합계', ...(S._gender ? ['남', '여'] : [])], body);
   });
 }
 const METHOD_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6aa36f', '#9a8f7a', '#4a5a59', '#d1b56b'];
@@ -874,6 +895,7 @@ const RULES = {
   2026: {
     '시즌제로': {
       open: '2026-01-02',
+      end: '2026-02-20', // 개강 후 탭: 이날부터의 입소·퇴소는 특이값으로 제외 (정규시즌 개강일)
       period: '접수 2025년 12월 8일(월) 오전 10시 ~ 입소 2026년 1월 1일(목)',
       methods: [
         ['메디컬 전형', '2026학년도 수능 또는 평가원 기준 국·수(미적분)·영·과탐(한 과목) 중\n[수능] 3과목 합 4등급 이내 (수학 필수)\n[평가원] 3과목 합 3등급 이내 (수학 필수)\n* 등록자에게 수업 선택·기숙사 타입 선택 우선권 부여', '12월 8일(월) 오전 10시부터\n수강료 납부 선착순 마감'],
@@ -1003,8 +1025,9 @@ function render() {
   if (S.tab === 'timing' || S.tab === 'after') $('#tabTools').append(
     h('span', { class: 'segs', role: 'group', 'aria-label': '보기' }, [['reg', S.tab === 'after' ? '입소별' : '등록별'], ['method', '전형별']].map(([k, t]) =>
       h('button', { class: 'seg' + ((S._view || 'reg') === k ? ' on' : ''), 'aria-pressed': (S._view || 'reg') === k, onclick: () => { S._view = k; render(); } }, t))),
-    h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { S._unit = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
-    (S._view || 'reg') === 'reg' ? null : h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, S.tab === 'after' ? '입소자만' : '등록자만')));
+    h('button', { class: 'chip' + (S._gender ? ' on' : ''), 'aria-pressed': !!S._gender, onclick: () => { S._gender = !S._gender; render(); } }, '남녀 나눠 보기'),
+    h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { (S._units ??= {})[unitKey()] = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
+    (S._view || 'reg') === 'reg' ? '' : h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, S.tab === 'after' ? '입소자만' : '등록자만')));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   const isRule = S.tab === 'rule' || S.tab === 'scholar';
   if (S.tab !== 'data') {
@@ -1014,7 +1037,7 @@ function render() {
   }
   if (S.tab === 'region') $('#mapSel').value = S._mapBasis || 'a';
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
-  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = S._unit || 'week'; if ($('#basisSel')) $('#basisSel').value = S._basis || 'all'; }
+  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = curUnit(); if ($('#basisSel')) $('#basisSel').value = S._basis || 'all'; }
   VIEWS[S.tab]();
   S._dim = $('#dimSel')?.value || S._dim;
 }
