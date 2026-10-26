@@ -776,14 +776,16 @@ function viewDim() {
 /* ===== 탭: 입소·퇴소 ===== */
 function monthKey(d, y) { const yy = +d.slice(0, 4), m = +d.slice(5, 7); return yy < y ? m - 12 : yy > y ? m + 12 : m; }
 function monthLabel(k) { return k <= 0 ? `전년 ${k + 12}월` : k > 12 ? `다음해 ${k - 12}월` : `${k}월`; }
+/* 개강일 전에 찍힌 입소일은 개강일로 봄 */
+function effIn(r) { const op = openDate(r.y, r.se); return r.i && op && r.i < op ? op : r.i; }
 function viewFlow() {
   const rows = filtered(), ys = yearsSel();
-  const b = block('월별 입소·퇴소', '퇴소 = 입소 후 퇴소, 취소 = 입소 없이 퇴소일만 있는 접수 취소 (각각 해당 날짜의 월 기준)');
+  const b = block('월별 입소·퇴소', '퇴소 = 입소 후 퇴소, 취소 = 입소 없이 퇴소일만 있는 접수 취소 (각각 해당 날짜의 월 기준). 개강일 전에 찍힌 입소일은 개강일 입소로 봅니다.');
   const keys = new Set();
   const m = {}; ys.forEach(y => m[y] = {});
   const add = (y, k, f) => { keys.add(k); m[y][k] ??= { i: 0, o: 0, c: 0 }; m[y][k][f]++; };
   rows.forEach(r => {
-    if (r.i) add(r.y, monthKey(r.i, r.y), 'i');
+    if (r.i) add(r.y, monthKey(effIn(r), r.y), 'i');
     if (r.o) add(r.y, monthKey(r.o, r.y), r.in ? 'o' : 'c');
   });
   const ks = [...keys].sort((a, b) => a - b);
@@ -797,7 +799,7 @@ function viewFlow() {
   const buckets = ['1개월 미만', '1~2개월', '2~3개월', '3~4개월', '4~6개월', '6개월 이상'];
   const bk = d => d < 30 ? 0 : d < 61 ? 1 : d < 91 ? 2 : d < 122 ? 3 : d < 183 ? 4 : 5;
   const by = {}; ys.forEach(y => by[y] = buckets.map(() => 0));
-  rows.filter(r => r.in && r.o).forEach(r => { const d = dnum(r.o) - dnum(r.i); if (d >= 0) by[r.y][bk(d)]++; });
+  rows.filter(r => r.in && r.o).forEach(r => { const d = dnum(r.o) - dnum(effIn(r)); if (d >= 0) by[r.y][bk(d)]++; });
   const out = buckets.map((l, i) => [l, ...ys.flatMap(y => { const t = by[y].reduce((a, c) => a + c, 0); return [by[y][i], rate(by[y][i], t)]; })]);
   table(b2, '재원기간', ['기간', ...ys.flatMap(y => [`${y} 인원`, `${y} 비율`])], out);
 
