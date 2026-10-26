@@ -21,6 +21,10 @@ header{background:var(--ink);color:#fff;padding:18px 24px 0}
 .hrow{display:flex;align-items:baseline;gap:16px;flex-wrap:wrap;max-width:1240px;margin:0 auto}
 h1{font-size:22px;font-weight:700;letter-spacing:-.02em;margin:0}
 h1 span{font-weight:400;color:#a9b5b3;margin-left:6px}
+#sumBtn{background:none;border:1px solid #56615f;color:#d8dfde;border-radius:999px;padding:3px 14px;cursor:pointer;font-weight:600;align-self:center}
+#sumBtn:hover{border-color:var(--teal);color:#fff}
+#sumBtn.on{background:var(--teal);border-color:var(--teal);color:#fff}
+#sub[hidden]{display:none}
 .me{margin-left:auto;font-size:13px;color:#a9b5b3;display:flex;gap:10px;align-items:center}
 .me button{background:none;border:1px solid #56615f;color:#d8dfde;border-radius:6px;padding:3px 10px;cursor:pointer}
 #top{display:flex;gap:26px;max-width:1240px;margin:14px auto 0;overflow-x:auto;align-items:flex-end}
@@ -107,7 +111,7 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 </head>
 <body>
 <header>
-  <div class="hrow"><h1>의대관 모집 통계<span>연도별 비교</span></h1>
+  <div class="hrow"><h1>의대관 모집 통계<span>연도별 비교</span></h1><button id="sumBtn" type="button">요약</button>
     <div class="me"><span id="who"></span><button id="logout" hidden>로그아웃</button></div></div>
   <nav id="top" role="tablist" aria-label="연도·시즌"></nav>
 </header>
@@ -324,7 +328,7 @@ let db = null, auth = null;
 if (!LOCAL) { const app = initializeApp(firebaseConfig); db = getFirestore(app); auth = getAuth(app); }
 
 /* ===== 상태 ===== */
-const S = { metas: [], rows: [], years: new Set(), season: '전체', tab: 'sum', mode: null, cur: null, pending: null, local: {} };
+const S = { metas: [], rows: [], years: new Set(), season: '전체', tab: 'guide', mode: null, cur: null, pending: null, local: {} };
 const $ = (q, el = document) => el.querySelector(q);
 const h = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
@@ -505,13 +509,13 @@ const count = (rows, f) => rows.reduce((n, r) => n + (f(r) ? 1 : 0), 0);
 /* ===== 탭: 요약 ===== */
 function viewSum() {
   const rows = filtered();
-  const b = block('연도·시즌별 접수와 등록', '등록 = 입소한 인원. 개강 당시 등록인원 = 개강일에 재원 중이던 인원(개강일까지 입소하고 그날 전에 퇴소하지 않음). 정규시즌 총원 = 여기에 정규시즌 개강일에 재원 중인 시즌제로 학생을 더한 인원.');
+  const b = block('연도·시즌별 요약', '등록 = 입소한 인원. 개강 당시 등록인원 = 개강일에 재원 중이던 인원(개강일까지 입소하고 그날 전에 퇴소하지 않음). 정규시즌 총원 = 여기에 정규시즌 개강일에 재원 중인 시즌제로 학생을 더한 인원.');
   const head = ['연도', '시즌', '접수', '접수 남', '접수 여', '등록', '등록 남', '등록 여', '개강 당시 등록인원'];
   const body = [], labels = [], dA = [], dE = [], dO = [];
   const line = (y, s, rs, total) => {
     const en = rs.filter(r => r.in);
     const ref = s !== '합계' ? openDate(y, s) : null;
-    const atOpen = total ? body.filter(r => r[0] === String(y) && !r.total).reduce((n, r) => n + (typeof r[8] === 'number' ? r[8] : (r[8]?.n || 0)), 0)
+    const atOpen = total ? '–'
       : ref ? count(en, r => r.i <= ref && (!r.o || r.o >= ref)) : '–';
     let openCell = atOpen;
     if (!total && s === '정규시즌' && ref) {
@@ -1106,7 +1110,7 @@ function render() {
 function setStatus(t) { $('#status').textContent = t; }
 function toast(t) { const e = $('#toast'); e.textContent = t; e.classList.add('on'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('on'), 2400); }
 
-const SUBTABS = [['sum', '요약'], ['region', '지역분포'], ['timing', '접수 시기'], ['after', '개강 후'], ['dim', '항목별'], ['flow', '입소·퇴소'], ['guide', '모집요강']];
+const SUBTABS = [['guide', '모집요강'], ['timing', '개강 전'], ['after', '개강 후'], ['flow', '입소·퇴소'], ['region', '지역분포']];
 function topEntries() {
   const ys = [...new Set([...S.metas.map(m => m.year), ...Object.keys(RULES).map(Number)])].sort((a, b) => b - a);
   return ys.map(y => {
@@ -1117,7 +1121,7 @@ function topEntries() {
 }
 function selectYS(y, s, quiet) {
   S.mode = 'ys'; S.cur = [y, s]; S.years = new Set([y]); S.season = s;
-  if (S.tab === 'data') S.tab = 'sum';
+  if (S.tab === 'data' || S.tab === 'sum') S.tab = 'guide';
   if (!quiet) { renderNav(); render(); }
 }
 function renderNav() {
@@ -1127,12 +1131,15 @@ function renderNav() {
   const right = h('div', { class: 'ygrp end' });
   if (S.metas.length > 1 || S.mode === 'compare') right.append(h('button', { class: S.mode === 'compare' ? 'on' : '', onclick: () => {
     S.mode = 'compare'; S.years = new Set(S.metas.map(m => m.year).slice(-3)); S.season = S.cur?.[1] || '전체';
-    if (S.tab === 'data') S.tab = 'sum'; renderNav(); render();
+    if (S.tab === 'data' || S.tab === 'sum') S.tab = 'guide'; renderNav(); render();
   } }, '연도 비교'));
   right.append(h('button', { class: S.mode === 'data' ? 'on' : '', onclick: () => { S.mode = 'data'; S.tab = 'data'; renderNav(); render(); } }, '데이터 관리'));
   top.append(right);
   const sub = $('#sub'); sub.innerHTML = '';
   $('#subbar').hidden = S.mode === 'data';
+  $('#sub').hidden = S.mode === 'summary';
+  const sb = $('#sumBtn'); sb.classList.toggle('on', S.mode === 'summary'); sb.setAttribute('aria-pressed', S.mode === 'summary');
+  sb.onclick = () => { S.mode = 'summary'; S.tab = 'sum'; S.years = new Set(S.metas.map(m => m.year)); S.season = '전체'; renderNav(); render(); };
   SUBTABS.forEach(([k, t]) => sub.append(h('button', { class: S.tab === k ? 'on' : '', 'aria-selected': S.tab === k, onclick: () => { S.tab = k; renderNav(); render(); } }, t)));
   $('#cmp').hidden = S.mode !== 'compare';
   if (S.mode === 'compare') renderFilters();
