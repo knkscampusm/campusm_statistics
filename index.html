@@ -683,6 +683,23 @@ function viewTiming(phase = 'pre') {
     });
   });
 }
+/* 전형 표시 순서 (성적순은 접수일로 차수 구분) */
+const METHOD_ORDER = ['전액 장학생', '메디컬 전형', '우선선발 전형', '선착순 전형', '특별 전형', '성적순', '면접 전형', '유시험 전형'];
+function roundRanges(y, s) {
+  return (RULES[y]?.[s]?.rounds || []).map(([n, p]) => {
+    const d = [...p.matchAll(/(\d{1,2})\/(\d{1,2})/g)].map(m => { const mo = +m[1]; return `${mo >= 8 ? y - 1 : y}-${p2(mo)}-${p2(+m[2])}`; });
+    return { n, st: d[0], en: d[1] || d[0] };
+  });
+}
+function methodOf(r, rr) {
+  if (r.m !== '성적순 전형') return r.m;
+  const x = rr.find(q => r.a >= q.st && r.a <= q.en);
+  return x ? `성적순 ${x.n}` : '성적순 (차수 외)';
+}
+function methodRank(m) {
+  const i = METHOD_ORDER.findIndex(o => o === m || (o === '성적순' && m.startsWith('성적순')));
+  return (i < 0 ? 99 : i) + (m === '성적순 (차수 외)' ? .5 : 0);
+}
 function viewMethodDate(all, s, ys, refs, unit, phase) {
   const post = phase === 'post', ph = post ? '개강 후' : '개강 전';
   const L = post ? [['a', '접수'], ['e', '입소'], ['c', '퇴소']] : [['a', '접수'], ['e', '등록'], ['c', '환불']];
@@ -692,13 +709,14 @@ function viewMethodDate(all, s, ys, refs, unit, phase) {
     const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && ref && inPhase(r, ref, phase));
     if (!rows.length) return;
     const end = post && RULES[y]?.[s]?.end;
-    const ms = Object.entries(rows.reduce((o, r) => (o[r.m] = (o[r.m] || 0) + 1, o), {})).sort((a, b) => b[1] - a[1]).map(x => x[0]);
+    const rr = roundRanges(y, s), mo = r => methodOf(r, rr);
+    const ms = [...new Set(rows.map(mo))].sort((a, b) => methodRank(a) - methodRank(b) || a.localeCompare(b, 'ko'));
     const grid = { a: {}, e: {}, c: {} }, gx = { a: {}, e: {}, c: {} }, tot = { a: {}, e: {}, c: {} }, ks = new Set();
     rows.forEach(r => L.forEach(([t]) => {
       const d = dateOf(r, t); if (!d || (end && t !== 'a' && d >= end)) return;
       const k = relKey(d, ref, y, unit); ks.add(k);
-      grid[t][k] ??= {}; grid[t][k][r.m] = (grid[t][k][r.m] || 0) + 1;
-      tot[t][r.m] = (tot[t][r.m] || 0) + 1;
+      const mm = mo(r); grid[t][k] ??= {}; grid[t][k][mm] = (grid[t][k][mm] || 0) + 1;
+      tot[t][mm] = (tot[t][mm] || 0) + 1;
       if (r.sx === '남' || r.sx === '여') { gx[t][k] ??= { 남: 0, 여: 0 }; gx[t][k][r.sx]++; }
     }));
     const keys = fillWeeks([...ks].sort((a, b) => a - b), unit, phase);
