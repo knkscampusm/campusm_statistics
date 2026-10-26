@@ -663,27 +663,50 @@ function viewTiming(phase = 'pre') {
   });
 }
 function viewMethodDate(all, s, ys, refs, unit, phase) {
-  const onlyIn = S._basis === 'in';
+  const post = phase === 'post', ph = post ? '개강 후' : '개강 전';
+  const L = post ? [['a', '접수'], ['e', '입소'], ['c', '퇴소']] : [['a', '접수'], ['e', '등록'], ['c', '환불']];
+  const dateOf = (r, t) => t === 'a' ? r.a : t === 'e' ? (post ? r.i : r.rd) : (post ? r.o : r.fd);
   ys.forEach(y => {
     const ref = refs[y];
-    const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && ref && inPhase(r, ref, phase) && (!onlyIn || (phase === 'post' ? r.in : r.rd)));
-    if (!rows.length || !ref) return;
+    const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && ref && inPhase(r, ref, phase));
+    if (!rows.length) return;
+    const end = post && RULES[y]?.[s]?.end;
     const ms = Object.entries(rows.reduce((o, r) => (o[r.m] = (o[r.m] || 0) + 1, o), {})).sort((a, b) => b[1] - a[1]).map(x => x[0]);
-    const grid = {};
-    rows.forEach(r => { const k = relKey(r.a, ref, y, unit); grid[k] ??= {}; grid[k][r.m] = (grid[k][r.m] || 0) + 1; });
-    const keys = fillWeeks(Object.keys(grid).map(Number).sort((a, b) => a - b), unit, phase);
+    const grid = { a: {}, e: {}, c: {} }, gx = { a: {}, e: {}, c: {} }, tot = { a: {}, e: {}, c: {} }, ks = new Set();
+    rows.forEach(r => L.forEach(([t]) => {
+      const d = dateOf(r, t); if (!d || (end && t !== 'a' && d >= end)) return;
+      const k = relKey(d, ref, y, unit); ks.add(k);
+      grid[t][k] ??= {}; grid[t][k][r.m] = (grid[t][k][r.m] || 0) + 1;
+      tot[t][r.m] = (tot[t][r.m] || 0) + 1;
+      if (r.sx === '남' || r.sx === '여') { gx[t][k] ??= { 남: 0, 여: 0 }; gx[t][k][r.sx]++; }
+    }));
+    const keys = fillWeeks([...ks].sort((a, b) => a - b), unit, phase);
     const lab = k => unit === 'month' ? (k <= 0 ? `${y - 1}년 ${k + 12}월` : k > 12 ? `${y + 1}년 ${k - 12}월` : `${y}년 ${k}월`)
       : `${relLabel(k, unit)} (${relRange(k, ref, unit)})`;
-    const b = block(`${y} ${s} ${phase === 'post' ? '개강 후' : '개강 전'} 전형별 접수`, `접수일 기준, ${onlyIn ? (phase === 'post' ? '입소자만' : '등록일이 있는 사람만') : '접수 전체'}`);
-    const gx = {}; if (S._gender) rows.forEach(r => { if (r.sx !== '남' && r.sx !== '여') return; const k = relKey(r.a, ref, y, unit); gx[k] ??= { 남: 0, 여: 0 }; gx[k][r.sx]++; });
-    const gcol = k => S._gender ? [gx[k]?.남 || 0, gx[k]?.여 || 0] : [];
-    const body = keys.map(k => { const g = grid[k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0), ...gcol(k)]; });
-    const tot = ['합계', ...ms.map(m => rows.filter(r => r.m === m).length), rows.length, ...(S._gender ? [count(rows, r => r.sx === '남'), count(rows, r => r.sx === '여')] : [])]; tot.total = true; body.push(tot);
-    chart(b, {
-      type: 'bar', data: { labels: keys.map(k => relLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[k]?.[m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
-      options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, title: { display: true, text: '인원' } } } }
-    }, 300);
-    table(b, `${y} ${s} 전형별 접수`, [unit === 'month' ? '접수 월' : '시점', ...ms, '합계', ...(S._gender ? ['남', '여'] : [])], body);
+    const pre = ys.length > 1 ? `${y} ` : '';
+
+    // 전형별 합계
+    const b0 = block(`${pre}${s} ${ph} 전형별 합계`, `${ph} 접수자 기준. ${L.map(([, n]) => n).join('·')}은 각 날짜가 ${post && end ? `${end} 전인` : '있는'} 인원입니다.`);
+    const sum = t => ms.reduce((n, m) => n + (tot[t][m] || 0), 0);
+    const body0 = ms.map(m => { const a = tot.a[m] || 0, e = tot.e[m] || 0, c = tot.c[m] || 0; return [m, a, e, rate(e, a), c, e - c]; });
+    const t0 = ['합계', sum('a'), sum('e'), rate(sum('e'), sum('a')), sum('c'), sum('e') - sum('c')]; t0.total = true; body0.push(t0);
+    table(b0, `${pre}${s} 전형별 합계`, ['전형', '접수', L[1][1], `${L[1][1]}률`, L[2][1], post ? '순입소' : '순등록'], body0);
+
+    // 접수 / 등록(입소) / 환불(퇴소) 각각
+    L.forEach(([t, n]) => {
+      const tk = keys.filter(k => grid[t][k]);
+      if (!tk.length) return;
+      const b = block(`${pre}${s} ${ph} 전형별 ${n}`, `${n}일이 속한 ${{ week: '주', month: '월', day: '날' }[unit]} 기준`);
+      chart(b, {
+        type: 'bar', data: { labels: keys.map(k => relLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[t][k]?.[m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
+        options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, beginAtZero: true, title: { display: true, text: '인원' } } } }
+      }, 260);
+      const gcol = k => S._gender ? [gx[t][k]?.남 || 0, gx[t][k]?.여 || 0] : [];
+      const body = keys.map(k => { const g = grid[t][k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0), ...gcol(k)]; });
+      const gs = x => keys.reduce((a, k) => a + (gx[t][k]?.[x] || 0), 0);
+      const tt = ['합계', ...ms.map(m => tot[t][m] || ''), sum(t), ...(S._gender ? [gs('남'), gs('여')] : [])]; tt.total = true; body.push(tt);
+      table(b, `${pre}${s} 전형별 ${n}`, [unit === 'month' ? '월' : '시점', ...ms, '합계', ...(S._gender ? ['남', '여'] : [])], body);
+    });
   });
 }
 const METHOD_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6aa36f', '#9a8f7a', '#4a5a59', '#d1b56b'];
@@ -1035,8 +1058,7 @@ function render() {
     h('span', { class: 'segs', role: 'group', 'aria-label': '보기' }, [['reg', S.tab === 'after' ? '입소별' : '등록별'], ['method', '전형별']].map(([k, t]) =>
       h('button', { class: 'seg' + ((S._view || 'reg') === k ? ' on' : ''), 'aria-pressed': (S._view || 'reg') === k, onclick: () => { S._view = k; render(); } }, t))),
     h('button', { class: 'chip' + (S._gender ? ' on' : ''), 'aria-pressed': !!S._gender, onclick: () => { S._gender = !S._gender; render(); } }, '남녀 나눠 보기'),
-    h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { (S._units ??= {})[unitKey()] = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))),
-    (S._view || 'reg') === 'reg' ? '' : h('select', { id: 'basisSel', 'aria-label': '인원 기준', onchange: e => { S._basis = e.target.value; render(); } }, h('option', { value: 'all' }, '접수 전체'), h('option', { value: 'in' }, S.tab === 'after' ? '입소자만' : '등록자만')));
+    h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { (S._units ??= {})[unitKey()] = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   const isRule = S.tab === 'rule' || S.tab === 'scholar';
   if (S.tab !== 'data') {
@@ -1046,7 +1068,7 @@ function render() {
   }
   if (S.tab === 'region') $('#mapSel').value = S._mapBasis || 'a';
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
-  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = curUnit(); if ($('#basisSel')) $('#basisSel').value = S._basis || 'all'; }
+  if (S.tab === 'timing' || S.tab === 'after') { $('#unitSel').value = curUnit(); }
   VIEWS[S.tab]();
   S._dim = $('#dimSel')?.value || S._dim;
 }
