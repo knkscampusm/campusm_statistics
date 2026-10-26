@@ -341,7 +341,12 @@ const YEAR_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6a
 const yearColor = y => { const ys = [...S.years].sort((a, b) => b - a); return YEAR_COLORS[ys.indexOf(y) % YEAR_COLORS.length] || '#999'; };
 
 /* ===== 데이터 입출력 ===== */
-function wrap(r, y, c, j) { const e = enrich(r, y); e._raw = r; e._c = c; e._j = j; e.x = r.x || ''; return e; }
+const EXCLUDE_METHODS = ['고3과정']; // 다른 과정 학생: 모든 통계에서 제외
+function wrap(r, y, c, j) {
+  const e = enrich(r, y); e._raw = r; e._c = c; e._j = j; e.x = r.x || '';
+  if (EXCLUDE_METHODS.includes(e.m)) { e.x = 'a'; e.lock = true; }
+  return e;
+}
 async function saveFlags(year, chunks, metaPatch) {
   if (LOCAL) { if (metaPatch) Object.assign(S.local[year].meta, metaPatch); return; }
   const b = writeBatch(db);
@@ -369,7 +374,7 @@ function autoFlag() {
     const ry = S.rows.filter(r => r.y === m.year);
     seasonsIn(ry).forEach(se => {
       const rs = ry.filter(r => r.se === se), st = mainStart(rs);
-      rs.forEach(r => { if (!r._raw.x && st && r.a && r.a < st) { r.x = 't'; r.auto = true; } });
+      rs.forEach(r => { if (!r.lock && !r._raw.x && st && r.a && r.a < st) { r.x = 't'; r.auto = true; } });
     });
   });
 }
@@ -379,7 +384,7 @@ function outlierList() {
     const ry = S.rows.filter(r => r.y === m.year);
     seasonsIn(ry).forEach(se => {
       const rs = ry.filter(r => r.se === se), st = mainStart(rs);
-      rs.forEach(r => { if (r.x || (st && r.a && r.a < st)) out.push({ r, st }); });
+      rs.forEach(r => { if (!r.lock && (r.x || (st && r.a && r.a < st))) out.push({ r, st }); });
     });
   });
   return out.sort((a, b) => a.r.y - b.r.y || (a.r.a || '').localeCompare(b.r.a || ''));
