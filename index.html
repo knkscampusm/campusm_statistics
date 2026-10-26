@@ -75,6 +75,11 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 .tile{border-radius:7px;padding:6px 8px;display:flex;flex-direction:column;justify-content:space-between;color:var(--ink);line-height:1.15}
 .tile b{font-size:13px}.tile span{font-size:16px;font-weight:700}.tile small{font-size:11px;opacity:.75}
 .tile.dark{color:#fff}
+.tbl.rule td.st{white-space:nowrap;line-height:1.5}
+.tbl.rule td.st span,.tbl.rule td.st small{display:block}
+.tbl.rule td.st span+span{color:var(--teal-d);font-weight:600}
+.tbl.rule td.st small{color:var(--muted)}
+.tbl.rule td.subt{background:#f7f9f9}
 .sub{font-size:15px;margin:18px 0 4px;font-weight:700}
 .notes{margin:4px 0 6px;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.7}
 .btn{background:var(--teal-d);color:#fff;border:0;border-radius:7px;padding:7px 16px;cursor:pointer;font-weight:600}
@@ -1020,12 +1025,24 @@ function viewRule() {
   ts.forEach(([y, s, R]) => {
     const b = block(`${y} ${s} 모집 전형`, R.period);
     const rows = S.rows.filter(r => r.y === y && r.se === s && r.x !== 'a');
-    const has = rows.length > 0;
-    const body = R.methods.map(([m, q, p]) => {
-      const g = rows.filter(r => r.m === m), e = count(g, r => r.in);
-      return [m, q, p, ...(has ? [g.length, e, g.length ? pct(e, g.length) : '–'] : [])];
-    });
-    textTable(b, `${y} ${s} 전형`, ['전형', '지원 자격', '접수 및 등록', ...(has ? ['접수', '등록', '등록률'] : [])], body, { num: has ? [3, 4, 5] : [] });
+    const ref = openDate(y, s);
+    const COLS = [['개강 전', r => ref && r.a && r.a < ref], ['개강 후', r => ref && r.a && r.a >= ref], ['남', r => r.sx === '남'], ['여', r => r.sx === '여'], ['소계', () => true]];
+    const stat = g => COLS.map(([, f]) => { const x = g.filter(f); return [x.length, count(x, r => r.in)]; });
+    const cell = ([a, e], sub) => h('td', { class: 'n st' + (sub ? ' subt' : '') }, h('span', {}, `접수 ${fmt(a)}`), h('span', {}, `등록 ${fmt(e)}`), sub ? h('small', {}, a ? pct(e, a) : '–') : null);
+    const names = R.methods.map(x => x[0]);
+    const lines = R.methods.map(([m, q, p]) => ({ label: m, q, p, st: stat(rows.filter(r => r.m === m)) }));
+    const etc = rows.filter(r => !names.includes(r.m));
+    if (etc.length) lines.push({ label: '기타', q: [...new Set(etc.map(r => r.m))].join(', '), p: '', st: stat(etc) });
+    const total = { label: '합계', q: '', p: '', st: stat(rows), total: true };
+    const has = rows.length > 0, all = has ? [...lines, total] : lines;
+    exportables.push({ name: `${y} ${s} 전형`, head: ['전형', '지원 자격', '접수 및 등록', ...(has ? COLS.flatMap(([n]) => [`${n} 접수`, `${n} 등록`]).concat(['등록률']) : [])],
+      body: all.map(l => [l.label, l.q, l.p, ...(has ? l.st.flat().concat([l.st[4][0] ? Math.round(l.st[4][1] / l.st[4][0] * 1000) / 10 : '']) : [])]) });
+    b.append(h('div', { class: 'tw' }, h('table', { class: 'tbl rule' },
+      h('thead', {}, h('tr', {}, ['전형', '지원 자격', '접수 및 등록', ...(has ? COLS.map(([n]) => n) : [])].map((c, i) => h('th', { class: i > 2 ? 'n' : '' }, c)))),
+      h('tbody', {}, all.map(l => h('tr', { class: l.total ? 'total' : '' },
+        h('td', { class: 'k' }, l.label), h('td', {}, l.q), h('td', {}, l.p),
+        ...(has ? l.st.map((v, i) => cell(v, i === 4)) : [])))))));
+    if (has) b.append(h('p', { class: 'note' }, `개강 전·후는 접수일이 개강일(${ref}) 전인지로 나눕니다. 등록 = 입소한 인원. 소계 아래 %는 등록률입니다.`));
     b.append(h('h3', { class: 'sub' }, '성적순 전형 차수별 합격자 발표'));
     textTable(b, `${y} ${s} 발표일정`, ['차수', '접수 기간', '합격자 발표'], R.rounds);
     b.append(notesEl(R.notes));
