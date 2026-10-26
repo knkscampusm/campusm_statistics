@@ -505,25 +505,32 @@ const count = (rows, f) => rows.reduce((n, r) => n + (f(r) ? 1 : 0), 0);
 /* ===== 탭: 요약 ===== */
 function viewSum() {
   const rows = filtered();
-  const b = block('연도·시즌별 접수와 등록', '등록 = 입소일이 날짜로 입력된 인원. 접수 취소 = 입소일 없이 퇴소일만 있는 인원.');
-  const head = ['연도', '시즌', '접수', '등록', '등록률', '접수 취소', '미입소', '입소 후 퇴소', '재원·수료', '남', '여', '등록자 평균 등급합'];
-  const body = [], labels = [], dA = [], dE = [];
+  const b = block('연도·시즌별 접수와 등록', '등록 = 입소한 인원. 개강 당시 등록인원 = 개강일에 재원 중이던 인원(개강일까지 입소하고 그날 전에 퇴소하지 않음). 정규시즌 총원 = 여기에 정규시즌 개강일에 재원 중인 시즌제로 학생을 더한 인원.');
+  const head = ['연도', '시즌', '접수', '접수 남', '접수 여', '등록', '등록 남', '등록 여', '개강 당시 등록인원'];
+  const body = [], labels = [], dA = [], dE = [], dO = [];
   const line = (y, s, rs, total) => {
-    const en = rs.filter(r => r.in), gs = en.filter(r => r.gs != null);
-    const row = [String(y), s, rs.length, en.length, rate(en.length, rs.length),
-      count(rs, r => r.st === '접수 취소'), count(rs, r => r.st === '미입소'), count(rs, r => r.st === '입소 후 퇴소'), count(rs, r => r.st === '재원·수료'),
-      count(rs, r => r.sx === '남'), count(rs, r => r.sx === '여'),
-      gs.length ? (gs.reduce((a, r) => a + r.gs, 0) / gs.length).toFixed(2) : '–'];
+    const en = rs.filter(r => r.in);
+    const ref = s !== '합계' ? openDate(y, s) : null;
+    const atOpen = total ? body.filter(r => r[0] === String(y) && !r.total).reduce((n, r) => n + (typeof r[8] === 'number' ? r[8] : (r[8]?.n || 0)), 0)
+      : ref ? count(en, r => r.i <= ref && (!r.o || r.o >= ref)) : '–';
+    let openCell = atOpen;
+    if (!total && s === '정규시즌' && ref) {
+      // 정규시즌 개강일에 아직 재원 중인 시즌제로 학생(정규시즌 원서 없이 이어서 다님)을 더한 총원
+      const sids = new Set(en.filter(r => r.i <= ref && (!r.o || r.o >= ref) && r.sid).map(r => r.sid));
+      const zero = S.rows.filter(r => r.y === y && r.se === '시즌제로' && r.x !== 'a' && r.in && r.i <= ref && (!r.o || r.o >= ref) && !(r.sid && sids.has(r.sid))).length;
+      if (zero) { const t = `${fmt(atOpen)} (총원 : ${fmt(atOpen + zero)})`; openCell = { t, v: null, x: t, n: atOpen }; }
+    }
+    const row = [String(y), s, rs.length, count(rs, r => r.sx === '남'), count(rs, r => r.sx === '여'), en.length, count(en, r => r.sx === '남'), count(en, r => r.sx === '여'), openCell];
     if (total) row.total = true; return row;
   };
   yearsSel().forEach(y => {
     const ry = rows.filter(r => r.y === y), ss = seasonsIn(ry);
-    ss.forEach(s => { const rs = ry.filter(r => r.se === s); body.push(line(y, s, rs)); labels.push(`${y} ${s}`); dA.push(rs.length); dE.push(count(rs, r => r.in)); });
+    ss.forEach(s => { const rs = ry.filter(r => r.se === s), l = line(y, s, rs); body.push(l); labels.push(`${y} ${s}`); dA.push(l[2]); dE.push(l[5]); dO.push(typeof l[8] === 'number' ? l[8] : (l[8]?.n || 0)); });
     if (ss.length > 1) body.push(line(y, '합계', ry, true));
   });
   table(b, '연도시즌별 요약', head, body);
   chart(b, {
-    type: 'bar', data: { labels, datasets: [{ label: '접수', data: dA, backgroundColor: '#c9d6d4' }, { label: '등록', data: dE, backgroundColor: '#3dbbb1' }] },
+    type: 'bar', data: { labels, datasets: [{ label: '접수', data: dA, backgroundColor: '#c9d6d4' }, { label: '등록', data: dE, backgroundColor: '#3dbbb1' }, { label: '개강 당시 등록인원', data: dO, backgroundColor: '#1f8a82' }] },
     options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
   });
 }
@@ -1070,7 +1077,7 @@ function viewScholar() {
 }
 
 /* ===== 렌더 ===== */
-const VIEWS = { rule: viewRule, scholar: viewScholar, sum: viewSum, region: viewRegion, timing: () => viewTiming('pre'), after: () => viewTiming('post'), dim: viewDim, flow: viewFlow, data: viewData };
+const VIEWS = { guide: () => (S._guide === 'scholar' ? viewScholar() : viewRule()), sum: viewSum, region: viewRegion, timing: () => viewTiming('pre'), after: () => viewTiming('post'), dim: viewDim, flow: viewFlow, data: viewData };
 function render() {
   resetView();
   const v = $('#view'); v.innerHTML = '';
@@ -1081,8 +1088,10 @@ function render() {
       h('button', { class: 'seg' + ((S._view || 'reg') === k ? ' on' : ''), 'aria-pressed': (S._view || 'reg') === k, onclick: () => { S._view = k; render(); } }, t))),
     h('button', { class: 'chip' + (S._gender ? ' on' : ''), 'aria-pressed': !!S._gender, onclick: () => { S._gender = !S._gender; render(); } }, '남녀 나눠 보기'),
     h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { (S._units ??= {})[unitKey()] = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))));
+  if (S.tab === 'guide') $('#tabTools').append(h('span', { class: 'segs', role: 'group', 'aria-label': '모집요강 보기' }, [['rule', '성적 조건'], ['scholar', '장학제도']].map(([k, t]) =>
+    h('button', { class: 'seg' + ((S._guide || 'rule') === k ? ' on' : ''), 'aria-pressed': (S._guide || 'rule') === k, onclick: () => { S._guide = k; render(); } }, t))));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
-  const isRule = S.tab === 'rule' || S.tab === 'scholar';
+  const isRule = S.tab === 'guide';
   if (S.tab !== 'data') {
     if (!S.metas.length && !isRule) { v.append(h('p', { class: 'empty' }, '저장된 데이터가 없습니다. 데이터 관리 탭에서 엑셀을 올려주세요.')); return; }
     if (!S.years.size && !isRule) { v.append(h('p', { class: 'empty' }, '위에서 연도를 하나 이상 골라주세요.')); return; }
@@ -1097,7 +1106,7 @@ function render() {
 function setStatus(t) { $('#status').textContent = t; }
 function toast(t) { const e = $('#toast'); e.textContent = t; e.classList.add('on'); clearTimeout(e._t); e._t = setTimeout(() => e.classList.remove('on'), 2400); }
 
-const SUBTABS = [['sum', '요약'], ['region', '지역분포'], ['timing', '접수 시기'], ['after', '개강 후'], ['dim', '항목별'], ['flow', '입소·퇴소'], ['rule', '성적조건'], ['scholar', '장학제도']];
+const SUBTABS = [['sum', '요약'], ['region', '지역분포'], ['timing', '접수 시기'], ['after', '개강 후'], ['dim', '항목별'], ['flow', '입소·퇴소'], ['guide', '모집요강']];
 function topEntries() {
   const ys = [...new Set([...S.metas.map(m => m.year), ...Object.keys(RULES).map(Number)])].sort((a, b) => b - a);
   return ys.map(y => {
