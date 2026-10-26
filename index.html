@@ -56,6 +56,7 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 .block{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin-bottom:18px}
 .bh{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .bh h2{font-size:17px;margin:0;font-weight:700;letter-spacing:-.01em}
+.bh-r{margin-left:auto}
 .note{margin:0;color:var(--muted);font-size:13px}
 .tw{overflow-x:auto;margin:6px 0 14px}
 .tbl{border-collapse:collapse;width:100%;font-size:14px}
@@ -535,37 +536,45 @@ function aggTable(b, name, label, o, ys, rows, limit) {
   return keys;
 }
 function viewRegion() {
-  const rows = filtered(), ys = yearsSel(), basis = S._mapBasis || 'a';
-  const sd = agg(rows, r => r.sd || '미입력');
-  const b = block('시·도별 분포', `거주지 주소 기준. 지도 색은 ${basis === 'a' ? '접수' : '등록'} 비중입니다.`);
-  const maps = h('div', { class: 'maps' });
-  ys.forEach(y => {
-    const tot = rows.filter(r => r.y === y && (basis === 'a' || r.in)).length;
-    const max = Math.max(1, ...Object.keys(TILES).map(k => sd[k]?.[y]?.[basis] || 0));
-    const g = h('div', { class: 'tilemap', role: 'img', 'aria-label': `${y} 시도별 ${basis === 'a' ? '접수' : '등록'} 분포` });
-    Object.entries(TILES).forEach(([k, [c, r]]) => {
-      const v = sd[k]?.[y]?.[basis] || 0, t = h('div', { class: 'tile' + (v / max > .45 ? ' dark' : ''), title: `${k} ${fmt(v)}명` },
-        h('b', {}, k), h('span', {}, fmt(v)), h('small', {}, tot ? (v / tot * 100).toFixed(1) + '%' : ''));
-      t.style.gridColumn = c + 1; t.style.gridRow = r + 1;
-      t.style.background = v ? `rgba(61,187,177,${(.12 + v / max * .88).toFixed(3)})` : 'var(--bg)';
-      g.append(t);
+  const rows = filtered(), ys = yearsSel(), basis = S._mapBasis || 'a', rv = S._regionView || 'sido';
+  const VIEWS_R = [['sido', '시·도별 분포'], ['sigungu', '시·군·구 상위 30'], ['school', '출신 학교 상위 30']];
+  const NOTES = { sido: `거주지 주소 기준. 지도 색은 ${basis === 'a' ? '접수' : '등록'} 비중입니다.`, sigungu: '거주지 주소 기준, 최근 연도 접수 순', school: '출신학교 기준, 최근 연도 접수 순. 이름이 같은 학교를 구분하려고 지역을 함께 표시합니다.' };
+  const b = block(VIEWS_R.find(v => v[0] === rv)[1], NOTES[rv]);
+  b.querySelector('.bh').append(h('span', { class: 'segs bh-r', role: 'group', 'aria-label': '분포 보기' }, VIEWS_R.map(([k, t]) =>
+    h('button', { class: 'seg' + (rv === k ? ' on' : ''), 'aria-pressed': rv === k, onclick: () => { S._regionView = k; render(); } }, t.replace(' 상위 30', '')))));
+  const lbl = basis === 'a' ? '접수' : '등록';
+  const bars = (o, keys) => {
+    const top = keys.filter(k => k !== '미입력').slice(0, 15);
+    chart(b, {
+      type: 'bar', data: { labels: top, datasets: ys.map(y => ({ label: `${y} ${lbl}`, backgroundColor: yearColor(y), data: top.map(k => o[k]?.[y]?.[basis] || 0) })) },
+      options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+    }, Math.max(240, top.length * (22 + ys.length * 6)));
+  };
+  if (rv === 'sido') {
+    const sd = agg(rows, r => r.sd || '미입력');
+    const maps = h('div', { class: 'maps' });
+    ys.forEach(y => {
+      const tot = rows.filter(r => r.y === y && (basis === 'a' || r.in)).length;
+      const max = Math.max(1, ...Object.keys(TILES).map(k => sd[k]?.[y]?.[basis] || 0));
+      const g = h('div', { class: 'tilemap', role: 'img', 'aria-label': `${y} 시도별 ${lbl} 분포` });
+      Object.entries(TILES).forEach(([k, [c, r]]) => {
+        const v = sd[k]?.[y]?.[basis] || 0, t = h('div', { class: 'tile' + (v / max > .45 ? ' dark' : ''), title: `${k} ${fmt(v)}명` },
+          h('b', {}, k), h('span', {}, fmt(v)), h('small', {}, tot ? (v / tot * 100).toFixed(1) + '%' : ''));
+        t.style.gridColumn = c + 1; t.style.gridRow = r + 1;
+        t.style.background = v ? `rgba(61,187,177,${(.12 + v / max * .88).toFixed(3)})` : 'var(--bg)';
+        g.append(t);
+      });
+      maps.append(h('figure', {}, g, h('figcaption', {}, `${y} · ${lbl} ${fmt(tot)}명`)));
     });
-    maps.append(h('figure', {}, g, h('figcaption', {}, `${y} · ${basis === 'a' ? '접수' : '등록'} ${fmt(tot)}명`)));
-  });
-  b.append(maps);
-  aggTable(b, '시도별 분포', '시·도', sd, ys, rows);
-
-  const sg = agg(rows, r => r.sg || '미입력');
-  const b2 = block('시·군·구 상위 30', '거주지 주소 기준, 최근 연도 접수 순');
-  const keys = aggTable(b2, '시군구 분포', '시·군·구', sg, ys, rows, 30);
-  const top = keys.filter(k => k !== '미입력').slice(0, 15);
-  chart(b2, {
-    type: 'bar', data: { labels: top, datasets: ys.map(y => ({ label: `${y} ${basis === 'a' ? '접수' : '등록'}`, backgroundColor: yearColor(y), data: top.map(k => sg[k]?.[y]?.[basis] || 0) })) },
-    options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-  }, Math.max(240, top.length * (22 + ys.length * 6)));
-
-  const b3 = block('출신학교 지역', '출신학교에 표시된 지역 기준');
-  aggTable(b3, '출신학교 지역', '학교 지역', agg(rows, r => r.sr || '미입력'), ys, rows);
+    b.append(maps);
+    aggTable(b, '시도별 분포', '시·도', sd, ys, rows);
+  } else if (rv === 'sigungu') {
+    const sg = agg(rows, r => r.sg || '미입력');
+    bars(sg, aggTable(b, '시군구 분포', '시·군·구', sg, ys, rows, 30));
+  } else {
+    const sc = agg(rows, r => r.sc ? (r.sr ? `${r.sc} (${r.sr})` : r.sc) : '미입력');
+    bars(sc, aggTable(b, '출신 학교', '출신 학교', sc, ys, rows, 30));
+  }
 }
 
 /* ===== 탭: 접수 시기 ===== */
