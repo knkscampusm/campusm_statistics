@@ -84,6 +84,10 @@ main{max-width:1240px;margin:0 auto;padding:20px 24px 80px}
 .tbl.rule td.st span+span{color:var(--teal-d);font-weight:600}
 .tbl.rule td.st small{color:var(--muted)}
 .tbl.rule td.subt{background:#f7f9f9}
+.tbl.rule.mtbl td.st span{font-size:13px;font-weight:500}
+.tbl.rule.mtbl td.st span.m0{color:var(--muted)}
+.tbl.rule.mtbl td.st span.m1{color:var(--teal-d);font-weight:600}
+.tbl.rule.mtbl td.st span.m2{color:#a24f4a;font-weight:600}
 .sub{font-size:15px;margin:18px 0 4px;font-weight:700}
 .notes{margin:4px 0 6px;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.7}
 .btn{background:var(--teal-d);color:#fff;border:0;border-radius:7px;padding:7px 16px;cursor:pointer;font-weight:600}
@@ -731,21 +735,30 @@ function viewMethodDate(all, s, ys, refs, unit, phase) {
     const t0 = ['합계', sum('a'), sum('e'), rate(sum('e'), sum('a')), sum('c'), sum('e') - sum('c')]; t0.total = true; body0.push(t0);
     table(b0, `${pre}${s} 전형별 합계`, ['전형', '접수', L[1][1], `${L[1][1]}률`, L[2][1], post ? '순입소' : '순등록'], body0);
 
-    // 접수 / 등록(입소) / 환불(퇴소) 각각
-    L.forEach(([t, n]) => {
-      const tk = keys.filter(k => grid[t][k]);
-      if (!tk.length) return;
-      const b = block(`${pre}${s} ${ph} 전형별 ${n}`, `${n}일이 속한 ${{ week: '주', month: '월', day: '날' }[unit]} 기준`);
-      chart(b, {
-        type: 'bar', data: { labels: keys.map(k => relLabel(k, unit)), datasets: ms.map((m, i) => ({ label: m, data: keys.map(k => grid[t][k]?.[m] || 0), backgroundColor: METHOD_COLORS[i % METHOD_COLORS.length], stack: 'm' })) },
-        options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, beginAtZero: true, title: { display: true, text: '인원' } } } }
-      }, 260);
-      const gcol = k => S._gender ? [gx[t][k]?.남 || 0, gx[t][k]?.여 || 0] : [];
-      const body = keys.map(k => { const g = grid[t][k] || {}; return [lab(k), ...ms.map(m => g[m] || ''), ms.reduce((a, m) => a + (g[m] || 0), 0), ...gcol(k)]; });
-      const gs = x => keys.reduce((a, k) => a + (gx[t][k]?.[x] || 0), 0);
-      const tt = ['합계', ...ms.map(m => tot[t][m] || ''), sum(t), ...(S._gender ? [gs('남'), gs('여')] : [])]; tt.total = true; body.push(tt);
-      table(b, `${pre}${s} 전형별 ${n}`, [unit === 'month' ? '월' : '시점', ...ms, '합계', ...(S._gender ? ['남', '여'] : [])], body);
-    });
+    // 접수 · 등록(입소) · 환불(퇴소) 합친 그래프와 표
+    const b = block(`${pre}${s} ${ph} 전형별 ${L.map(([, n]) => n).join('·')}`, `각각 ${L.map(([, n]) => n + '일').join('·')}이 속한 ${{ week: '주', month: '월', day: '날' }[unit]}에 셉니다. 그래프는 시점마다 왼쪽부터 ${L.map(([, n]) => n).join(' · ')} 막대입니다.`);
+    const hex = (c, al) => c + Math.round(al * 255).toString(16).padStart(2, '0');
+    const ALPHA = { a: .35, e: 1, c: .7 };
+    chart(b, {
+      type: 'bar', data: { labels: keys.map(k => relLabel(k, unit)), datasets: L.flatMap(([t, n]) => ms.map((m, i) => ({
+        label: m, metric: n, stack: t, data: keys.map(k => grid[t][k]?.[m] || 0),
+        backgroundColor: hex(METHOD_COLORS[i % METHOD_COLORS.length], ALPHA[t]), borderColor: METHOD_COLORS[i % METHOD_COLORS.length], borderWidth: t === 'c' ? 1 : 0 }))) },
+      options: { maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { filter: it => it.datasetIndex >= ms.length && it.datasetIndex < ms.length * 2 } }, tooltip: { callbacks: { label: c => `${c.dataset.metric} · ${c.dataset.label}: ${c.parsed.y}` } } },
+        scales: { x: { stacked: true, ticks: { maxRotation: 60, autoSkip: true } }, y: { stacked: true, beginAtZero: true, title: { display: true, text: '인원' } } } }
+    }, 300);
+    const cellOf = vals => h('td', { class: 'n st' }, vals.map((v, i) => h('span', { class: 'm' + i }, `${L[i][1]} ${fmt(v)}`)));
+    const val = (t, k, m) => grid[t][k]?.[m] || 0;
+    const lineFor = (lb, f, total) => ({ lb, total, cells: [...ms.map(m => L.map(([t]) => f(t, m))), L.map(([t]) => ms.reduce((n, m) => n + f(t, m), 0))] });
+    const lines = keys.map(k => lineFor(lab(k), (t, m) => val(t, k, m)));
+    lines.push(lineFor('합계', (t, m) => tot[t][m] || 0, true));
+    const gLine = (t, k, x) => k == null ? keys.reduce((n, kk) => n + (gx[t][kk]?.[x] || 0), 0) : (gx[t][k]?.[x] || 0);
+    exportables.push({ name: `${pre}${s} ${ph} 전형별`, head: ['시점', ...[...ms, '합계'].flatMap(m => L.map(([, n]) => `${m} ${n}`)), ...(S._gender ? L.flatMap(([, n]) => [`${n} 남`, `${n} 여`]) : [])],
+      body: lines.map((l, i) => [l.lb, ...l.cells.flat(), ...(S._gender ? L.flatMap(([t]) => ['남', '여'].map(x => gLine(t, l.total ? null : keys[i], x))) : [])]) });
+    b.append(h('div', { class: 'tw' }, h('table', { class: 'tbl rule mtbl' },
+      h('thead', {}, h('tr', {}, ['시점', ...ms, '합계', ...(S._gender ? ['남', '여'] : [])].map((c, i) => h('th', { class: i ? 'n' : '' }, c)))),
+      h('tbody', {}, lines.map((l, i) => h('tr', { class: l.total ? 'total' : '' }, h('td', { class: 'k' }, l.lb), ...l.cells.map(cellOf),
+        ...(S._gender ? ['남', '여'].map(x => cellOf(L.map(([t]) => gLine(t, l.total ? null : keys[i], x)))) : [])))))));
   });
 }
 const METHOD_COLORS = ['#3dbbb1', '#5b7c99', '#e0a43a', '#c9706b', '#8a6fb0', '#6aa36f', '#9a8f7a', '#4a5a59', '#d1b56b'];
@@ -797,34 +810,44 @@ function monthLabel(k) { return k <= 0 ? `전년 ${k + 12}월` : k > 12 ? `다�
 /* 개강일 전에 찍힌 입소일은 개강일로 봄 */
 function effIn(r) { const op = openDate(r.y, r.se); return r.i && op && r.i < op ? op : r.i; }
 function viewFlow() {
-  const rows = filtered(), ys = yearsSel();
-  const b = block('월별 입소·퇴소', '퇴소 = 입소 후 퇴소, 취소 = 입소 없이 퇴소일만 있는 접수 취소 (각각 해당 날짜의 월 기준). 개강일 전에 찍힌 입소일은 개강일 입소로 봅니다.');
+  const rows = filtered(), ys = yearsSel(), G = !!S._gender;
+  const b = block('월별 입소·퇴소', '입소 = 입소일이 있는 인원(입소일 월 기준), 퇴소 = 입소일과 퇴소일이 모두 있는 인원(퇴소일 월 기준). 입소일 없이 퇴소일만 있는 경우는 세지 않습니다. 개강일 전에 찍힌 입소일은 개강일 입소로 봅니다.');
   const keys = new Set();
   const m = {}; ys.forEach(y => m[y] = {});
-  const add = (y, k, f) => { keys.add(k); m[y][k] ??= { i: 0, o: 0, c: 0 }; m[y][k][f]++; };
+  const add = (r, k, f) => { keys.add(k); const c = (m[r.y][k] ??= { i: 0, o: 0, i남: 0, i여: 0, o남: 0, o여: 0 }); c[f]++; if (r.sx === '남' || r.sx === '여') c[f + r.sx]++; };
   rows.forEach(r => {
-    if (r.i) add(r.y, monthKey(effIn(r), r.y), 'i');
-    if (r.o) add(r.y, monthKey(r.o, r.y), r.in ? 'o' : 'c');
+    if (!r.i) return;
+    add(r, monthKey(effIn(r), r.y), 'i');
+    if (r.o) add(r, monthKey(r.o, r.y), 'o');
   });
   const ks = [...keys].sort((a, b) => a - b);
-  table(b, '월별 입소퇴소', ['월', ...ys.flatMap(y => [`${y} 입소`, `${y} 퇴소`, `${y} 취소`])], ks.map(k => [monthLabel(k), ...ys.flatMap(y => { const c = m[y][k] || { i: 0, o: 0, c: 0 }; return [c.i, c.o, c.c]; })]));
+  const cols = G ? [['i', '입소'], ['i남', '입소 남'], ['i여', '입소 여'], ['o', '퇴소'], ['o남', '퇴소 남'], ['o여', '퇴소 여']] : [['i', '입소'], ['o', '퇴소']];
+  const zero = { i: 0, o: 0, i남: 0, i여: 0, o남: 0, o여: 0 };
+  const body = ks.map(k => [monthLabel(k), ...ys.flatMap(y => cols.map(([f]) => (m[y][k] || zero)[f]))]);
+  const tot = ['합계', ...ys.flatMap(y => cols.map(([f]) => ks.reduce((n, k) => n + (m[y][k]?.[f] || 0), 0)))]; tot.total = true; body.push(tot);
+  table(b, '월별 입소퇴소', ['월', ...ys.flatMap(y => cols.map(([, n]) => `${ys.length > 1 ? y + ' ' : ''}${n}`))], body);
+  const one = ys.length === 1;
+  const ds = ys.flatMap(y => {
+    const p = one ? '' : `${y} `, c = yearColor(y);
+    if (!G) return [{ label: `${p}입소`, backgroundColor: c, data: ks.map(k => m[y][k]?.i || 0) }, { label: `${p}퇴소`, backgroundColor: '#c9706b', data: ks.map(k => -(m[y][k]?.o || 0)) }];
+    return [['i', '입소', 1], ['o', '퇴소', -1]].flatMap(([f, n, sg]) => [['남', f === 'i' ? '#1f8a82' : '#a24f4a'], ['여', f === 'i' ? '#8fd8d1' : '#e3aaa6']].map(([x, col]) =>
+      ({ label: `${p}${n} ${x}`, stack: `${y}`, backgroundColor: col, data: ks.map(k => sg * (m[y][k]?.[f + x] || 0)) })));
+  });
   chart(b, {
-    type: 'bar', data: { labels: ks.map(monthLabel), datasets: ys.flatMap(y => [{ label: `${y} 입소`, backgroundColor: yearColor(y), data: ks.map(k => m[y][k]?.i || 0) }, { label: `${y} 퇴소`, backgroundColor: yearColor(y) + '66', data: ks.map(k => -(m[y][k]?.o || 0)) }]) },
-    options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { ticks: { callback: v => Math.abs(v) } } } }
+    type: 'bar', data: { labels: ks.map(monthLabel), datasets: ds },
+    options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: c => `${c.dataset.label}: ${Math.abs(c.parsed.y)}` } } },
+      scales: { x: { stacked: G }, y: { stacked: G, ticks: { callback: v => Math.abs(v) } } } }
   });
 
-  const b2 = block('퇴소까지 재원 기간', '입소 후 퇴소한 인원의 입소일~퇴소일 간격');
+  const b2 = block('퇴소까지 재원 기간', '입소일과 퇴소일이 모두 있는 인원의 입소일~퇴소일 간격');
   const buckets = ['1개월 미만', '1~2개월', '2~3개월', '3~4개월', '4~6개월', '6개월 이상'];
   const bk = d => d < 30 ? 0 : d < 61 ? 1 : d < 91 ? 2 : d < 122 ? 3 : d < 183 ? 4 : 5;
-  const by = {}; ys.forEach(y => by[y] = buckets.map(() => 0));
-  rows.filter(r => r.in && r.o).forEach(r => { const d = dnum(r.o) - dnum(effIn(r)); if (d >= 0) by[r.y][bk(d)]++; });
-  const out = buckets.map((l, i) => [l, ...ys.flatMap(y => { const t = by[y].reduce((a, c) => a + c, 0); return [by[y][i], rate(by[y][i], t)]; })]);
-  table(b2, '재원기간', ['기간', ...ys.flatMap(y => [`${y} 인원`, `${y} 비율`])], out);
-
-  const b3 = block('시즌별 퇴소율', '등록 인원 중 입소 후 퇴소 비율');
-  const body3 = [];
-  ys.forEach(y => seasonsIn(rows.filter(r => r.y === y)).forEach(s => { const en = rows.filter(r => r.y === y && r.se === s && r.in); const o = count(en, r => r.o); body3.push([String(y), s, en.length, o, rate(o, en.length)]); }));
-  table(b3, '시즌별 퇴소율', ['연도', '시즌', '등록', '입소 후 퇴소', '퇴소율'], body3);
+  const by = {}; ys.forEach(y => by[y] = { all: buckets.map(() => 0), 남: buckets.map(() => 0), 여: buckets.map(() => 0) });
+  rows.filter(r => r.i && r.o).forEach(r => { const d = Math.max(0, dnum(r.o) - dnum(effIn(r))); by[r.y].all[bk(d)]++; if (by[r.y][r.sx]) by[r.y][r.sx][bk(d)]++; });
+  const sum = a => a.reduce((x, c) => x + c, 0);
+  const out = buckets.map((l, i) => [l, ...ys.flatMap(y => [by[y].all[i], rate(by[y].all[i], sum(by[y].all)), ...(G ? [by[y].남[i], by[y].여[i]] : [])])]);
+  const t2 = ['합계', ...ys.flatMap(y => [sum(by[y].all), '', ...(G ? [sum(by[y].남), sum(by[y].여)] : [])])]; t2.total = true; out.push(t2);
+  table(b2, '재원기간', ['기간', ...ys.flatMap(y => { const p = ys.length > 1 ? `${y} ` : ''; return [`${p}인원`, `${p}비율`, ...(G ? [`${p}남`, `${p}여`] : [])]; })], out);
 }
 
 /* ===== 탭: 데이터 관리 ===== */
@@ -1114,6 +1137,7 @@ function render() {
     h('label', {}, '단위 ', h('select', { id: 'unitSel', onchange: e => { (S._units ??= {})[unitKey()] = e.target.value; render(); } }, h('option', { value: 'week' }, '주별'), h('option', { value: 'month' }, '월별'), h('option', { value: 'day' }, '일별'))));
   if (S.tab === 'guide') $('#tabTools').append(h('span', { class: 'segs', role: 'group', 'aria-label': '모집요강 보기' }, [['rule', '성적 조건'], ['scholar', '장학제도']].map(([k, t]) =>
     h('button', { class: 'seg' + ((S._guide || 'rule') === k ? ' on' : ''), 'aria-pressed': (S._guide || 'rule') === k, onclick: () => { S._guide = k; render(); } }, t))));
+  if (S.tab === 'flow') $('#tabTools').append(h('button', { class: 'chip' + (S._gender ? ' on' : ''), 'aria-pressed': !!S._gender, onclick: () => { S._gender = !S._gender; render(); } }, '남녀 나눠 보기'));
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   const isRule = S.tab === 'guide';
   if (S.tab !== 'data') {
