@@ -648,7 +648,7 @@ function viewTiming(phase = 'pre') {
     const L = post ? { e: '입소', c: '퇴소', n: '순입소' } : { e: '등록', c: '환불', n: '순등록' };
     rows.forEach(r => {
       const ev = [['a', r.a], ['e', post ? r.i : r.rd], ['c', post ? r.o : r.fd]];
-      const end = post && RULES[r.y]?.[s]?.end;
+      const end = RULES[r.y]?.[s]?.end;
       ev.forEach(([t, d]) => { if (!d || (end && t !== 'a' && d >= end)) return; const k = relKey(d, refs[r.y], r.y, unit); keys.add(k); m[r.y][k] ??= { a: 0, e: 0, c: 0 }; m[r.y][k][t]++;
         if (r.sx === '남' || r.sx === '여') { mg[r.y][k] ??= {}; mg[r.y][k][t + r.sx] = (mg[r.y][k][t + r.sx] || 0) + 1; } });
     });
@@ -712,7 +712,7 @@ function viewMethodDate(all, s, ys, refs, unit, phase) {
     const ref = refs[y];
     const rows = all.filter(r => r.se === s && r.y === y && r.a && r.x !== 't' && ref && inPhase(r, ref, phase));
     if (!rows.length) return;
-    const end = post && RULES[y]?.[s]?.end;
+    const end = RULES[y]?.[s]?.end;
     const rr = roundRanges(y, s), mo = r => methodOf(r, rr);
     const ms = [...new Set(rows.map(mo))].sort((a, b) => methodRank(a) - methodRank(b) || a.localeCompare(b, 'ko'));
     const grid = { a: {}, e: {}, c: {} }, gx = { a: {}, e: {}, c: {} }, tot = { a: {}, e: {}, c: {} }, ks = new Set();
@@ -729,7 +729,7 @@ function viewMethodDate(all, s, ys, refs, unit, phase) {
     const pre = ys.length > 1 ? `${y} ` : '';
 
     // 전형별 합계
-    const b0 = block(`${pre}${s} ${ph} 전형별 합계`, `${ph} 접수자 기준. ${L.map(([, n]) => n).join('·')}은 각 날짜가 ${post && end ? `${end} 전인` : '있는'} 인원입니다.`);
+    const b0 = block(`${pre}${s} ${ph} 전형별 합계`, `${ph} 접수자 기준. ${L.map(([, n]) => n).join('·')}은 각 날짜가 ${end ? `${end} 전(시즌 기간 안)인` : '있는'} 인원입니다.`);
     const sum = t => ms.reduce((n, m) => n + (tot[t][m] || 0), 0);
     const body0 = ms.map(m => { const a = tot.a[m] || 0, e = tot.e[m] || 0, c = tot.c[m] || 0; return [m, a, e, rate(e, a), c, ...(post ? [] : [e - c])]; });
     const t0 = ['합계', sum('a'), sum('e'), rate(sum('e'), sum('a')), sum('c'), ...(post ? [] : [sum('e') - sum('c')])]; t0.total = true; body0.push(t0);
@@ -808,6 +808,7 @@ function viewDim() {
 function monthKey(d, y) { const yy = +d.slice(0, 4), m = +d.slice(5, 7); return yy < y ? m - 12 : yy > y ? m + 12 : m; }
 function monthLabel(k) { return k <= 0 ? `전년 ${k + 12}월` : k > 12 ? `다음해 ${k - 12}월` : `${k}월`; }
 /* 개강일 전에 찍힌 입소일은 개강일로 봄 */
+const inSeason = (r, d) => { const e = RULES[r.y]?.[r.se]?.end; return !e || d < e; };
 function effIn(r) { const op = openDate(r.y, r.se); return r.i && op && r.i < op ? op : r.i; }
 function viewFlow() {
   const rows = filtered(), ys = yearsSel(), G = !!S._gender, unit = curUnit();
@@ -820,8 +821,9 @@ function viewFlow() {
   const add = (r, k, f) => { keys.add(k); const c = (m[r.y][k] ??= { i: 0, o: 0, i남: 0, i여: 0, o남: 0, o여: 0 }); c[f]++; if (r.sx === '남' || r.sx === '여') c[f + r.sx]++; };
   rows.forEach(r => {
     if (!r.i) return;
+    if (!inSeason(r, effIn(r))) return;
     add(r, kOf(effIn(r), r), 'i');
-    if (r.o) add(r, kOf(r.o < effIn(r) ? effIn(r) : r.o, r), 'o');
+    if (r.o && inSeason(r, r.o)) add(r, kOf(r.o < effIn(r) ? effIn(r) : r.o, r), 'o');
   });
   const ks = [...keys].sort((a, b) => a - b);
   const cols = G ? [['i', '입소'], ['i남', '입소 남'], ['i여', '입소 여'], ['o', '퇴소'], ['o남', '퇴소 남'], ['o여', '퇴소 여']] : [['i', '입소'], ['o', '퇴소']];
@@ -847,7 +849,7 @@ function viewFlow() {
   const buckets = ['1개월 미만', '1~2개월', '2~3개월', '3~4개월', '4~6개월', '6개월 이상'];
   const bk = d => d < 30 ? 0 : d < 61 ? 1 : d < 91 ? 2 : d < 122 ? 3 : d < 183 ? 4 : 5;
   const by = {}; ys.forEach(y => by[y] = { all: buckets.map(() => 0), 남: buckets.map(() => 0), 여: buckets.map(() => 0) });
-  rows.filter(r => r.i && r.o).forEach(r => { const d = Math.max(0, dnum(r.o) - dnum(effIn(r))); by[r.y].all[bk(d)]++; if (by[r.y][r.sx]) by[r.y][r.sx][bk(d)]++; });
+  rows.filter(r => r.i && r.o && inSeason(r, effIn(r)) && inSeason(r, r.o)).forEach(r => { const d = Math.max(0, dnum(r.o) - dnum(effIn(r))); by[r.y].all[bk(d)]++; if (by[r.y][r.sx]) by[r.y][r.sx][bk(d)]++; });
   const sum = a => a.reduce((x, c) => x + c, 0);
   const out = buckets.map((l, i) => [l, ...ys.flatMap(y => [by[y].all[i], rate(by[y].all[i], sum(by[y].all)), ...(G ? [by[y].남[i], by[y].여[i]] : [])])]);
   const t2 = ['합계', ...ys.flatMap(y => [sum(by[y].all), '', ...(G ? [sum(by[y].남), sum(by[y].여)] : [])])]; t2.total = true; out.push(t2);
@@ -995,7 +997,7 @@ const RULES = {
   2026: {
     '시즌제로': {
       open: '2026-01-02',
-      end: '2026-02-20', // 개강 후 탭: 이날부터의 입소·퇴소는 특이값으로 제외 (정규시즌 개강일)
+      end: '2026-02-20', // 시즌 기간은 2/19까지: 이날부터의 입소·퇴소·등록·환불은 통계에서 제외
       period: '접수 2025년 12월 8일(월) 오전 10시 ~ 입소 2026년 1월 1일(목)',
       methods: [
         ['메디컬 전형', '2026학년도 수능 또는 평가원 기준 국·수(미적분)·영·과탐(한 과목) 중\n[수능] 3과목 합 4등급 이내 (수학 필수)\n[평가원] 3과목 합 3등급 이내 (수학 필수)\n* 등록자에게 수업 선택·기숙사 타입 선택 우선권 부여', '12월 8일(월) 오전 10시부터\n수강료 납부 선착순 마감'],
