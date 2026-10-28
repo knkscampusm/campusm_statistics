@@ -418,7 +418,7 @@ async function loadAll() {
   if (S.mode === 'compare' && !all.length) S.mode = null;
   if (S.mode === 'compare') S.years = new Set([...S.years].filter(y => all.includes(y)).concat(S.years.size ? [] : all.slice(-3)));
   if (!S.mode || (S.mode === 'ys' && !ents.some(([y, ss]) => y === S.cur?.[0] && ss.includes(S.cur[1])))) {
-    if (ents.length) selectYS(ents[0][0], ents[0][1][0], true); else { S.mode = 'data'; S.tab = 'data'; }
+    if (ents.length) selectYS(ents[0][0], ents[0][1][0], true); else { S.mode = null; S.tab = 'guide'; }
   }
   renderNav(); render();
 }
@@ -655,6 +655,8 @@ function viewTiming(phase = 'pre') {
     const ks = fillWeeks([...keys].sort((a, b) => a - b), unit, phase);
     const refNote = ys.filter(y => refs[y]).map(y => `${y} 개강일 ${refs[y]}`).join(', ');
     const ph = phase === 'post' ? '개강 후' : '개강 전';
+    const withRange = unit !== 'month';
+    if (!S._gender) {
     const b = block(`${s} ${ph} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 접수 인원`, `${refNote}. ${phase === 'post' ? '개강일 당일부터의 접수' : '개강일 전날까지의 접수'}만 대상으로, 접수는 접수일, ${post ? '입소는 입소일, 퇴소는 퇴소일' : '등록은 등록일, 환불은 환불일'}이 속한 주(월)에 셉니다.${unit === 'month' ? ' 전년 ○월은 운영 연도의 전해입니다.' : ''}${!post && ys.some(y => !S.metas.find(mm => mm.year === y)?.matched) ? ' ※ 매칭 파일이 없는 연도는 등록·환불이 비어 있습니다.' : ''}`);
     chart(b, {
       type: 'bar', data: { labels: ks.map(k => relLabel(k, unit)), datasets: ys.flatMap((y, i) => {
@@ -666,13 +668,13 @@ function viewTiming(phase = 'pre') {
       }) },
       options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { x: { ticks: { maxRotation: 60, autoSkip: true } }, y: { beginAtZero: true, title: { display: true, text: '인원' } } } }
     }, 280);
-    const withRange = unit !== 'month';
     const body = ks.map(k => [relLabel(k, unit), ...ys.flatMap(y => { const c = m[y][k] || { a: 0, e: 0, c: 0 }; return [...(withRange ? [refs[y] ? relRange(k, refs[y], unit) : ''] : []), c.a, c.e, c.c, ...(post ? [] : [c.e - c.c])]; })]);
     const tot = ['합계', ...ys.flatMap(y => { const t = Object.values(m[y]).reduce((o, c) => ({ a: o.a + c.a, e: o.e + c.e, c: o.c + c.c }), { a: 0, e: 0, c: 0 }); return [...(withRange ? [''] : []), t.a, t.e, t.c, ...(post ? [] : [t.e - t.c])]; })];
     tot.total = true; body.push(tot);
     table(b, `${s} 접수 인원`, [unit === 'month' ? '월' : '시점', ...ys.flatMap(y => [...(withRange ? [`${y} 기간`] : []), `${y} 접수`, `${y} ${L.e}`, `${y} ${L.c}`, ...(post ? [] : [`${y} ${L.n}`])])], body);
+    }
     if (S._gender) ys.forEach(y => {
-      const bg = block(`${ys.length > 1 ? y + ' ' : ''}${s} ${ph} 남녀별`, '위 표와 같은 기준을 남·여로 나눈 인원입니다. 성별이 비어 있는 행은 빠집니다.');
+      const bg = block(`${ys.length > 1 ? y + ' ' : ''}${s} ${ph} ${{ week: '주별', month: '월별', day: '일별' }[unit]} 남녀 인원`, `${refNote}. 접수·${L.e}·${L.c}을 남·여로 나눈 인원입니다. 성별이 비어 있는 행은 빠집니다.`);
       const g = (k, t) => mg[y][k]?.[t] || 0;
       const C = { a: ['#9fb0ae', '#d5dedd'], e: ['#1f8a82', '#8fd8d1'], c: ['#a24f4a', '#e3aaa6'] };
       chart(bg, {
@@ -1148,9 +1150,8 @@ function render() {
   if (S.tab === 'dim') $('#tabTools').append(h('label', {}, '항목 ', h('select', { id: 'dimSel', onchange: e => { S._dim = e.target.value; render(); } }, Object.keys(DIMS).map(k => h('option', {}, k)))));
   const isRule = S.tab === 'guide';
   if (S.tab !== 'data') {
-    if (!S.metas.length && !isRule) { v.append(h('p', { class: 'empty' }, '저장된 데이터가 없습니다. 데이터 관리 탭에서 엑셀을 올려주세요.')); return; }
+    if (!S.metas.length && !isRule) { v.append(h('p', { class: 'empty' }, '저장된 데이터가 없습니다.')); return; }
     if (!S.years.size && !isRule) { v.append(h('p', { class: 'empty' }, '위에서 연도를 하나 이상 골라주세요.')); return; }
-    $('#tabTools').append(h('button', { class: 'btn ghost', onclick: exportTab }, '이 탭 엑셀로 저장'));
   }
   if (S.tab === 'region') $('#mapSel').value = S._mapBasis || 'a';
   if (S.tab === 'dim' && S._dim) $('#dimSel').value = S._dim;
@@ -1185,7 +1186,6 @@ function renderNav() {
     S.mode = 'compare'; S.years = new Set(S.metas.map(m => m.year).slice(-3)); S.season = S.cur?.[1] || '전체';
     if (S.tab === 'data' || S.tab === 'sum') S.tab = 'guide'; renderNav(); render();
   } }, '연도 비교'));
-  right.append(h('button', { class: S.mode === 'data' ? 'on' : '', onclick: () => { S.mode = 'data'; S.tab = 'data'; renderNav(); render(); } }, '데이터 관리'));
   top.append(right);
   const sub = $('#sub'); sub.innerHTML = '';
   $('#subbar').hidden = S.mode === 'data';
